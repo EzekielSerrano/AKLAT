@@ -45,7 +45,7 @@ public class StudentKioskFX {
     private StackPane contentArea;
     private Label pageTitleLabel;
     private Button activeNavBtn;
-    private Button borrowNavBtn;
+    private Button dashNavBtn, borrowNavBtn, returnNavBtn, histNavBtn, profileNavBtn;
 
     // Lazy panels
     private Node dashNode, borrowNode, returnNode, histNode, profileNode;
@@ -355,8 +355,8 @@ public class StudentKioskFX {
         FXComponents.slideIn(sidebar, 220);
         String first = s.getName() == null ? "" : s.getName().split("[,\\s]+")[0];
         FXComponents.showToast(stackRoot, "Welcome, " + first + "!", "success");
-        // Land on the Borrow screen (profile card + scanner/search) right after tap-in
-        navTo(borrowNavBtn, "Borrow a Book", getBorrow());
+        // Land on the Dashboard right after tap-in
+        navTo(dashNavBtn, "Dashboard", getDash());
     }
 
     private VBox buildDashSidebar() {
@@ -398,8 +398,13 @@ public class StudentKioskFX {
         sb.getChildren().add(spacer);
         sb.getChildren().add(buildStudentCard());
 
-        activeNavBtn = dashBtn;
-        borrowNavBtn = borrowBtn;
+        activeNavBtn  = dashBtn;
+        dashNavBtn    = dashBtn;
+        borrowNavBtn  = borrowBtn;
+        returnNavBtn  = returnBtn;
+        histNavBtn    = histBtn;
+        profileNavBtn = profileBtn;
+
         dashBtn.setOnAction(e    -> navTo(dashBtn,   "Dashboard",     getDash()));
         borrowBtn.setOnAction(e  -> navTo(borrowBtn, "Borrow a Book", getBorrow()));
         returnBtn.setOnAction(e  -> navTo(returnBtn, "Return a Book", getReturn()));
@@ -532,15 +537,13 @@ public class StudentKioskFX {
 
     // Public nav for panel buttons
     public void navigateTo(String panelName) {
-        // Find nav button by panel name and simulate click via re-using navTo pattern
-        Node panel = switch (panelName) {
-            case "Borrow a Book" -> { refreshBorrow(); yield getBorrow(); }
-            case "Return a Book" -> { refreshReturn(); yield getReturn(); }
-            case "My History"    -> getHist();
-            case "My Profile"    -> getProfile();
-            default              -> { refreshDash(); yield getDash(); }
-        };
-        showDashPanel(panel, panelName);
+        switch (panelName) {
+            case "Borrow a Book" -> { refreshBorrow(); navTo(borrowNavBtn, "Borrow a Book", getBorrow()); }
+            case "Return a Book" -> { refreshReturn(); navTo(returnNavBtn, "Return a Book", getReturn()); }
+            case "My History"    -> navTo(histNavBtn, "My History", getHist());
+            case "My Profile"    -> navTo(profileNavBtn, "My Profile", getProfile());
+            default              -> { refreshDash(); navTo(dashNavBtn, "Dashboard", getDash()); }
+        }
     }
 
     private void refreshClock() {
