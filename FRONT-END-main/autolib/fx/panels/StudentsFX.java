@@ -10,8 +10,10 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.geometry.*;
 import javafx.scene.*;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.layout.*;
 import javafx.scene.paint.*;
+import javafx.scene.shape.Circle;
 import javafx.scene.text.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -21,23 +23,46 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Students panel — searchable table with NFC badges, loan counts,
- * inline action buttons (Edit, NFC link, Delete), and comprehensive editing.
+ * Students panel — modern dual-view layout:
+ * 1. Interactive 3-column Kanban board: Borrowed, Overdue, and No Balance.
+ * 2. Classic searchable, filterable Table view.
+ * Includes student registration, profile editing, NFC linking with card wedge support,
+ * and high-performance in-memory search and caching.
  */
 public class StudentsFX {
 
     private final LibrarianPortalFX portal;
     private final DataStore db = DataStore.get();
+
     private TextField searchField;
     private ComboBox<String> deptCombo;
+    private ComboBox<String> statusCombo;
     private TableView<Student> table;
     private Label countLabel;
+
+    // ── Kanban Board UI components ──────────────────────────────────
+    private HBox kanbanBoard;
+    private VBox colBorrowedCards;
+    private VBox colOverdueCards;
+    private VBox colNoBalanceCards;
+    private Label countBorrowedBadge;
+    private Label countOverdueBadge;
+    private Label countNoBalanceBadge;
+    private StackPane contentStack;
+    private Button kanbanToggleBtn;
+    private Button tableToggleBtn;
+    private boolean isKanbanView = true;
 
     // Feedback banner
     private HBox banner;
     private Label bannerLabel;
 
-    public StudentsFX(LibrarianPortalFX portal) { this.portal = portal; }
+    // Search debounce timer
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(120));
+
+    public StudentsFX(LibrarianPortalFX portal) {
+        this.portal = portal;
+    }
 
     public Node build() {
         VBox wrapper = new VBox(0);
@@ -61,15 +86,17 @@ public class StudentsFX {
         HBox.setHgrow(bannerLabel, Priority.ALWAYS);
         banner.getChildren().add(bannerLabel);
 
-        // Toolbar
+        // ── Toolbar ────────────────────────────────────────────────────
         HBox toolbar = new HBox(10);
         toolbar.setAlignment(Pos.CENTER_LEFT);
 
         searchField = new TextField();
         searchField.setPromptText("\uD83D\uDD0D  Search student by name, ID, or department\u2026");
         searchField.getStyleClass().add("input-field");
-        searchField.setPrefWidth(300);
-        searchField.textProperty().addListener((o, ov, nv) -> refresh());
+        searchField.setPrefWidth(280);
+
+        searchDebounce.setOnFinished(e -> refresh());
+        searchField.textProperty().addListener((o, ov, nv) -> searchDebounce.playFromStart());
 
         List<String> depts = db.getDepartments();
         String[] dArr = new String[depts.size() + 1];
@@ -78,15 +105,33 @@ public class StudentsFX {
         deptCombo = FXComponents.styledCombo(dArr);
         deptCombo.setOnAction(e -> refresh());
 
+        statusCombo = FXComponents.styledCombo(new String[]{"All Status", "Borrowed", "Overdue", "No Balance"});
+        statusCombo.setOnAction(e -> refresh());
+
+        // View mode switcher: Kanban vs Table
+        HBox viewSwitch = new HBox(2);
+        viewSwitch.setAlignment(Pos.CENTER);
+        viewSwitch.setStyle("-fx-background-color: #E2E8F0; -fx-background-radius: 8; -fx-padding: 3;");
+
+        kanbanToggleBtn = new Button("📌 Kanban Board");
+        tableToggleBtn = new Button("📋 Table View");
+
+        styleViewToggle(kanbanToggleBtn, true);
+        styleViewToggle(tableToggleBtn, false);
+
+        kanbanToggleBtn.setOnAction(e -> setViewMode(true));
+        tableToggleBtn.setOnAction(e -> setViewMode(false));
+        viewSwitch.getChildren().addAll(kanbanToggleBtn, tableToggleBtn);
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button addBtn = FXComponents.primaryButton("+ Register Student");
         addBtn.setOnAction(e -> showRegisterDialog());
 
-        toolbar.getChildren().addAll(searchField, deptCombo, spacer, addBtn);
+        toolbar.getChildren().addAll(searchField, deptCombo, statusCombo, viewSwitch, spacer, addBtn);
 
-        // Table
+        // ── Table View (Classic) ───────────────────────────────────────
         table = new TableView<>();
         table.getStyleClass().add("table-view");
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
@@ -131,7 +176,8 @@ public class StudentsFX {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); return; }
-                int v = Integer.parseInt(item);
+                int v = 0;
+                try { v = Integer.parseInt(item); } catch (Exception ignored) {}
                 setText(item);
                 setTextFill(v > 0 ? Color.web(FXComponents.RED) : Color.web(FXComponents.T_PRIMARY));
                 setFont(Font.font("Segoe UI", v > 0 ? FontWeight.BOLD : FontWeight.NORMAL, 13));
@@ -156,16 +202,25 @@ public class StudentsFX {
                 delBtn.setTooltip(new Tooltip("Delete Student Record"));
 
                 editBtn.setOnAction(e -> {
-                    Student s = getTableView().getItems().get(getIndex());
-                    if (s != null) showEditStudentDialog(s);
+                    int idx = getIndex();
+                    if (idx >= 0 && idx < getTableView().getItems().size()) {
+                        Student s = getTableView().getItems().get(idx);
+                        if (s != null) showEditStudentDialog(s);
+                    }
                 });
                 nfcBtn.setOnAction(e -> {
-                    Student s = getTableView().getItems().get(getIndex());
-                    if (s != null) showLinkNfcDialog(s);
+                    int idx = getIndex();
+                    if (idx >= 0 && idx < getTableView().getItems().size()) {
+                        Student s = getTableView().getItems().get(idx);
+                        if (s != null) showLinkNfcDialog(s);
+                    }
                 });
                 delBtn.setOnAction(e -> {
-                    Student s = getTableView().getItems().get(getIndex());
-                    if (s != null) confirmDeleteStudent(s);
+                    int idx = getIndex();
+                    if (idx >= 0 && idx < getTableView().getItems().size()) {
+                        Student s = getTableView().getItems().get(idx);
+                        if (s != null) confirmDeleteStudent(s);
+                    }
                 });
             }
 
@@ -210,23 +265,403 @@ public class StudentsFX {
             return row;
         });
 
+        // ── Kanban Board View ──────────────────────────────────────────
+        kanbanBoard = buildKanbanBoard();
+        VBox.setVgrow(kanbanBoard, Priority.ALWAYS);
+
+        // Content stack holding both views
+        contentStack = new StackPane(kanbanBoard, table);
+        VBox.setVgrow(contentStack, Priority.ALWAYS);
+
+        // Initial view mode: Kanban visible, Table hidden
+        setViewMode(true);
+
         countLabel = new Label();
         countLabel.setFont(Font.font("Segoe UI", 11));
         countLabel.setTextFill(Color.web(FXComponents.T_MUTED));
 
         refresh();
-        card.getChildren().addAll(banner, toolbar, table, countLabel);
+
+        card.getChildren().addAll(banner, toolbar, contentStack, countLabel);
         wrapper.getChildren().add(card);
         VBox.setVgrow(card, Priority.ALWAYS);
         return wrapper;
     }
 
+    private void setViewMode(boolean kanban) {
+        this.isKanbanView = kanban;
+        styleViewToggle(kanbanToggleBtn, kanban);
+        styleViewToggle(tableToggleBtn, !kanban);
+        kanbanBoard.setVisible(kanban);
+        kanbanBoard.setManaged(kanban);
+        table.setVisible(!kanban);
+        table.setManaged(!kanban);
+    }
+
+    private void styleViewToggle(Button btn, boolean active) {
+        if (active) {
+            btn.setStyle(
+                "-fx-background-color: white;" +
+                "-fx-text-fill: #1E293B;" +
+                "-fx-font-weight: bold;" +
+                "-fx-font-size: 11px;" +
+                "-fx-background-radius: 6;" +
+                "-fx-padding: 5 12;" +
+                "-fx-cursor: hand;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 3, 0, 0, 1);"
+            );
+        } else {
+            btn.setStyle(
+                "-fx-background-color: transparent;" +
+                "-fx-text-fill: #64748B;" +
+                "-fx-font-weight: normal;" +
+                "-fx-font-size: 11px;" +
+                "-fx-background-radius: 6;" +
+                "-fx-padding: 5 12;" +
+                "-fx-cursor: hand;"
+            );
+        }
+    }
+
+    private HBox buildKanbanBoard() {
+        HBox board = new HBox(16);
+        board.setAlignment(Pos.TOP_CENTER);
+        VBox.setVgrow(board, Priority.ALWAYS);
+
+        colBorrowedCards  = new VBox(10);
+        colOverdueCards   = new VBox(10);
+        colNoBalanceCards = new VBox(10);
+
+        countBorrowedBadge  = new Label("0");
+        countOverdueBadge   = new Label("0");
+        countNoBalanceBadge = new Label("0");
+
+        // Column 1: Borrowed (Amber / Orange)
+        VBox col1 = buildKanbanColumn(
+            "Borrowed",
+            "Students with active unreturned books",
+            "#D97706",
+            "#FFFBEB",
+            "#FDE68A",
+            "#F59E0B",
+            countBorrowedBadge,
+            colBorrowedCards
+        );
+
+        // Column 2: Overdue (Red)
+        VBox col2 = buildKanbanColumn(
+            "Overdue",
+            "Students with past-due books needing return",
+            "#DC2626",
+            "#FEF2F2",
+            "#FECACA",
+            "#EF4444",
+            countOverdueBadge,
+            colOverdueCards
+        );
+
+        // Column 3: No Balance (Green / Emerald)
+        VBox col3 = buildKanbanColumn(
+            "No Balance (Clear)",
+            "0 active loans — account in good standing",
+            "#059669",
+            "#ECFDF5",
+            "#A7F3D0",
+            "#10B981",
+            countNoBalanceBadge,
+            colNoBalanceCards
+        );
+
+        board.getChildren().addAll(col1, col2, col3);
+        return board;
+    }
+
+    private VBox buildKanbanColumn(String title, String subtitle, String colorHex, String bgHex,
+                                   String borderHex, String dotColor, Label badgeLabel, VBox cardsContainer) {
+        VBox col = new VBox(0);
+        col.setStyle(
+            "-fx-background-color: #F8FAFC;" +
+            "-fx-background-radius: 12;" +
+            "-fx-border-color: #E2E8F0;" +
+            "-fx-border-radius: 12;"
+        );
+        HBox.setHgrow(col, Priority.ALWAYS);
+        col.setMinWidth(260);
+        VBox.setVgrow(col, Priority.ALWAYS);
+
+        // Header
+        VBox header = new VBox(3);
+        header.setPadding(new Insets(12, 14, 12, 14));
+        header.setStyle(
+            "-fx-background-color: " + bgHex + ";" +
+            "-fx-background-radius: 11 11 0 0;" +
+            "-fx-border-color: " + borderHex + ";" +
+            "-fx-border-width: 0 0 1 0;"
+        );
+
+        HBox topRow = new HBox(8);
+        topRow.setAlignment(Pos.CENTER_LEFT);
+
+        Circle dot = new Circle(4.5, Color.web(dotColor));
+
+        Label titleLbl = new Label(title);
+        titleLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13.5));
+        titleLbl.setTextFill(Color.web(colorHex));
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        badgeLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+        badgeLabel.setTextFill(Color.web(colorHex));
+        badgeLabel.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-padding: 2 9;" +
+            "-fx-border-color: " + borderHex + ";" +
+            "-fx-border-radius: 10;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 2, 0, 0, 1);"
+        );
+
+        topRow.getChildren().addAll(dot, titleLbl, spacer, badgeLabel);
+
+        Label subLbl = new Label(subtitle);
+        subLbl.setFont(Font.font("Segoe UI", 10.5));
+        subLbl.setTextFill(Color.web("#64748B"));
+
+        header.getChildren().addAll(topRow, subLbl);
+
+        // Scrollable cards list
+        cardsContainer.setPadding(new Insets(12));
+        cardsContainer.setSpacing(10);
+        cardsContainer.setStyle("-fx-background-color: transparent;");
+
+        ScrollPane sp = new ScrollPane(cardsContainer);
+        sp.setFitToWidth(true);
+        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        sp.setStyle("-fx-background-color: transparent; -fx-background: transparent; -fx-border-color: transparent;");
+        VBox.setVgrow(sp, Priority.ALWAYS);
+
+        col.getChildren().addAll(header, sp);
+        return col;
+    }
+
+    private Node buildStudentCard(Student s) {
+        VBox card = new VBox(8);
+        card.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-border-color: #E2E8F0;" +
+            "-fx-border-radius: 10;" +
+            "-fx-padding: 12 14;" +
+            "-fx-cursor: default;"
+        );
+        card.setEffect(new DropShadow(6, 0, 2, Color.rgb(0, 0, 0, 0.04)));
+
+        // Top Row: Department badge + Year Level + Monospace Student ID
+        HBox topRow = new HBox(6);
+        topRow.setAlignment(Pos.CENTER_LEFT);
+
+        String dept = (s.getDepartment() != null && !s.getDepartment().trim().isEmpty()) ? s.getDepartment() : "General";
+        Label deptTag = new Label(dept);
+        deptTag.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 10));
+        deptTag.setTextFill(Color.web("#2563EB"));
+        deptTag.setStyle("-fx-background-color: #EFF6FF; -fx-background-radius: 6; -fx-padding: 2 7;");
+
+        Label yearLbl = new Label(s.getYear() != null ? s.getYear() : "");
+        yearLbl.setFont(Font.font("Segoe UI", 10.5));
+        yearLbl.setTextFill(Color.web("#64748B"));
+
+        Region topSpacer = new Region();
+        HBox.setHgrow(topSpacer, Priority.ALWAYS);
+
+        Label idLbl = new Label(s.getStudentId());
+        idLbl.setFont(Font.font("Consolas", 10.5));
+        idLbl.setTextFill(Color.web("#94A3B8"));
+
+        topRow.getChildren().addAll(deptTag, yearLbl, topSpacer, idLbl);
+
+        // Middle Row: Avatar + Name + NFC badge
+        HBox midRow = new HBox(10);
+        midRow.setAlignment(Pos.CENTER_LEFT);
+
+        String init = "?";
+        if (s.getName() != null && !s.getName().trim().isEmpty()) {
+            init = String.valueOf(s.getName().trim().charAt(0)).toUpperCase();
+        }
+        String avatarColor = FXComponents.BLUE;
+        if (s.getOverdueCount() > 0) avatarColor = FXComponents.RED;
+        else if (s.getActiveLoans() > 0) avatarColor = FXComponents.ORANGE;
+        else avatarColor = FXComponents.GREEN;
+
+        StackPane av = FXComponents.avatar(init, avatarColor, 34);
+
+        VBox infoBox = new VBox(2);
+        HBox.setHgrow(infoBox, Priority.ALWAYS);
+
+        Label nameLbl = new Label(s.getName() != null ? s.getName() : "Unknown Student");
+        nameLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        nameLbl.setTextFill(Color.web("#1E293B"));
+        nameLbl.setWrapText(true);
+
+        Label nfcBadge = FXComponents.badge(
+            s.isNfcRegistered() ? "🪪 NFC Linked" : "🪪 No NFC",
+            s.isNfcRegistered() ? "badge-green" : "badge-amber"
+        );
+        infoBox.getChildren().addAll(nameLbl, nfcBadge);
+        midRow.getChildren().addAll(av, infoBox);
+
+        // Status / Balance Row
+        HBox statusRow = new HBox(6);
+        statusRow.setAlignment(Pos.CENTER_LEFT);
+
+        if (s.getOverdueCount() > 0) {
+            Label ovBadge = new Label("⏰ " + s.getOverdueCount() + " Overdue");
+            ovBadge.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10.5));
+            ovBadge.setTextFill(Color.web("#DC2626"));
+            ovBadge.setStyle("-fx-background-color:#FEE2E2; -fx-background-radius:6; -fx-padding:2 7;");
+
+            Label loanSub = new Label("· " + s.getActiveLoans() + " Active Loan" + (s.getActiveLoans() == 1 ? "" : "s"));
+            loanSub.setFont(Font.font("Segoe UI", 10.5));
+            loanSub.setTextFill(Color.web("#64748B"));
+            statusRow.getChildren().addAll(ovBadge, loanSub);
+        } else if (s.getActiveLoans() > 0) {
+            Label loanBadge = new Label("📦 " + s.getActiveLoans() + " Book" + (s.getActiveLoans() == 1 ? "" : "s") + " Borrowed");
+            loanBadge.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 10.5));
+            loanBadge.setTextFill(Color.web("#D97706"));
+            loanBadge.setStyle("-fx-background-color:#FEF3C7; -fx-background-radius:6; -fx-padding:2 7;");
+            statusRow.getChildren().add(loanBadge);
+        } else {
+            Label clearBadge = new Label("✔ No Balance · Clear");
+            clearBadge.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 10.5));
+            clearBadge.setTextFill(Color.web("#059669"));
+            clearBadge.setStyle("-fx-background-color:#D1FAE5; -fx-background-radius:6; -fx-padding:2 7;");
+            statusRow.getChildren().add(clearBadge);
+        }
+
+        // Footer Row: NFC UID + Action buttons (Edit, NFC, Delete)
+        HBox footer = new HBox(6);
+        footer.setAlignment(Pos.CENTER_LEFT);
+        footer.setStyle("-fx-padding: 4 0 0 0; -fx-border-color: #F1F5F9; -fx-border-width: 1 0 0 0;");
+
+        String uidStr = (s.getNfcUid() != null && !s.getNfcUid().trim().isEmpty())
+            ? "UID: " + s.getNfcUid() : "No card linked";
+        Label uidLbl = new Label(uidStr);
+        uidLbl.setFont(Font.font("Consolas", 10));
+        uidLbl.setTextFill(Color.web("#94A3B8"));
+
+        Region footSpacer = new Region();
+        HBox.setHgrow(footSpacer, Priority.ALWAYS);
+
+        Button editBtn = new Button("✏");
+        editBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #64748B; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;");
+        editBtn.setTooltip(new Tooltip("Edit Student Information"));
+        editBtn.setOnMouseEntered(e -> editBtn.setStyle("-fx-background-color: #E2E8F0; -fx-text-fill: #1E293B; -fx-background-radius: 4; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        editBtn.setOnMouseExited(e -> editBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #64748B; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        editBtn.setOnAction(e -> showEditStudentDialog(s));
+
+        Button nfcBtn = new Button("🪪");
+        nfcBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #64748B; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;");
+        nfcBtn.setTooltip(new Tooltip("Link / Change NFC Card"));
+        nfcBtn.setOnMouseEntered(e -> nfcBtn.setStyle("-fx-background-color: #E2E8F0; -fx-text-fill: #1E293B; -fx-background-radius: 4; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        nfcBtn.setOnMouseExited(e -> nfcBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #64748B; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        nfcBtn.setOnAction(e -> showLinkNfcDialog(s));
+
+        Button delBtn = new Button("🗑");
+        delBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;");
+        delBtn.setTooltip(new Tooltip("Delete Student Record"));
+        delBtn.setOnMouseEntered(e -> delBtn.setStyle("-fx-background-color: #FEE2E2; -fx-text-fill: #EF4444; -fx-background-radius: 4; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        delBtn.setOnMouseExited(e -> delBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-font-size: 11px; -fx-padding: 2 5; -fx-cursor: hand;"));
+        delBtn.setOnAction(e -> confirmDeleteStudent(s));
+
+        footer.getChildren().addAll(uidLbl, footSpacer, editBtn, nfcBtn, delBtn);
+
+        card.getChildren().addAll(topRow, midRow, statusRow, footer);
+
+        // Hover animations
+        card.setOnMouseEntered(e -> {
+            card.setStyle(
+                "-fx-background-color: #FFFFFF;" +
+                "-fx-background-radius: 10;" +
+                "-fx-border-color: #94A3B8;" +
+                "-fx-border-radius: 10;" +
+                "-fx-padding: 12 14;" +
+                "-fx-cursor: default;" +
+                "-fx-translate-y: -2;"
+            );
+            card.setEffect(new DropShadow(10, 0, 4, Color.rgb(0, 0, 0, 0.08)));
+        });
+        card.setOnMouseExited(e -> {
+            card.setStyle(
+                "-fx-background-color: white;" +
+                "-fx-background-radius: 10;" +
+                "-fx-border-color: #E2E8F0;" +
+                "-fx-border-radius: 10;" +
+                "-fx-padding: 12 14;" +
+                "-fx-cursor: default;" +
+                "-fx-translate-y: 0;"
+            );
+            card.setEffect(new DropShadow(6, 0, 2, Color.rgb(0, 0, 0, 0.04)));
+        });
+
+        return card;
+    }
+
     private void refresh() {
         String q = searchField == null ? "" : searchField.getText().trim();
-        String dept = deptCombo == null ? "All Departments" : (String) deptCombo.getValue();
-        List<Student> students = db.searchStudents(q, dept);
+        String dept = deptCombo == null ? "All Departments" : deptCombo.getValue();
+        String status = statusCombo == null ? "All Status" : statusCombo.getValue();
+
+        List<Student> students = db.searchStudents(q, dept, status);
         table.getItems().setAll(students);
-        countLabel.setText("Showing " + students.size() + " student(s)");
+
+        // Clear Kanban columns
+        colBorrowedCards.getChildren().clear();
+        colOverdueCards.getChildren().clear();
+        colNoBalanceCards.getChildren().clear();
+
+        int countBorrowed = 0;
+        int countOverdue = 0;
+        int countNoBalance = 0;
+
+        for (Student s : students) {
+            Node studentCard = buildStudentCard(s);
+            if (s.getOverdueCount() > 0) {
+                colOverdueCards.getChildren().add(studentCard);
+                countOverdue++;
+            } else if (s.getActiveLoans() > 0) {
+                colBorrowedCards.getChildren().add(studentCard);
+                countBorrowed++;
+            } else {
+                colNoBalanceCards.getChildren().add(studentCard);
+                countNoBalance++;
+            }
+        }
+
+        // Empty column placeholders
+        if (countBorrowed == 0) colBorrowedCards.getChildren().add(emptyColumnPlaceholder("No borrowed books"));
+        if (countOverdue == 0) colOverdueCards.getChildren().add(emptyColumnPlaceholder("No overdue accounts ✔"));
+        if (countNoBalance == 0) colNoBalanceCards.getChildren().add(emptyColumnPlaceholder("No clear students found"));
+
+        countBorrowedBadge.setText(String.valueOf(countBorrowed));
+        countOverdueBadge.setText(String.valueOf(countOverdue));
+        countNoBalanceBadge.setText(String.valueOf(countNoBalance));
+
+        countLabel.setText(
+            "Showing " + students.size() + " student(s)  ·  " +
+            countBorrowed + " Borrowed  ·  " +
+            countOverdue + " Overdue  ·  " +
+            countNoBalance + " No Balance"
+        );
+    }
+
+    private Label emptyColumnPlaceholder(String msg) {
+        Label l = new Label(msg);
+        l.setFont(Font.font("Segoe UI", 12));
+        l.setTextFill(Color.web("#94A3B8"));
+        l.setAlignment(Pos.CENTER);
+        l.setMaxWidth(Double.MAX_VALUE);
+        l.setPadding(new Insets(24, 0, 24, 0));
+        return l;
     }
 
     private void showBanner(String msg, String type) {
@@ -396,6 +831,7 @@ public class StudentsFX {
             boolean ok = db.updateStudent(student);
             if (ok) {
                 refresh();
+                if (portal != null) portal.refreshStudents();
                 showBanner("✓ Student \"" + newName + "\" updated successfully!", "success");
                 dlg.close();
             } else {
@@ -430,6 +866,7 @@ public class StudentsFX {
             if (btn == deleteBtn) {
                 db.deleteStudent(student.getStudentId());
                 refresh();
+                if (portal != null) portal.refreshStudents();
                 showBanner("Student \"" + student.getName() + "\" removed.", "warn");
             }
         });
@@ -490,6 +927,7 @@ public class StudentsFX {
             if (s != null) {
                 db.addStudent(s);
                 refresh();
+                if (portal != null) portal.refreshStudents();
                 showBanner("✓ Student \"" + s.getName() + "\" registered successfully!", "success");
 
                 // Ask the user if they will add NFC connection to that student
@@ -618,6 +1056,7 @@ public class StudentsFX {
             student.setNfcUid(uid);
             db.updateStudentNfc(student);
             refresh();
+            if (portal != null) portal.refreshStudents();
 
             feedback.setText("✓ Card successfully linked: " + uid);
             feedback.setTextFill(Color.web(FXComponents.GREEN));

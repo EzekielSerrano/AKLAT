@@ -61,6 +61,9 @@ public class BookCatalogFX {
     private HBox banner;
     private Label bannerLabel;
 
+    // Search debounce timer
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(120));
+
     public BookCatalogFX(LibrarianPortalFX portal) {
         this.portal = portal;
     }
@@ -95,7 +98,8 @@ public class BookCatalogFX {
         searchField.setPromptText("\uD83D\uDD0D  Search by title, author, barcode, ISBN\u2026");
         searchField.getStyleClass().add("input-field");
         searchField.setPrefWidth(280);
-        searchField.textProperty().addListener((o, ov, nv) -> refresh());
+        searchDebounce.setOnFinished(e -> refresh());
+        searchField.textProperty().addListener((o, ov, nv) -> searchDebounce.playFromStart());
 
         sectionCombo = FXComponents.styledCombo(new String[]{"All Sections"});
         updateSectionCombo();

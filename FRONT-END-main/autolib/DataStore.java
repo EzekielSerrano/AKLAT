@@ -15,10 +15,14 @@ public class DataStore {
     private static DataStore instance;
     private boolean dbAvailable;
 
-    // In-memory cache / fallback
+    // In-memory cache / fallback with TTL management
     private List<Book> cachedBooks = new ArrayList<>();
     private List<Student> cachedStudents = new ArrayList<>();
     private List<Transaction> cachedTransactions = new ArrayList<>();
+    private long lastBooksLoaded = 0;
+    private long lastStudentsLoaded = 0;
+    private long lastTransactionsLoaded = 0;
+    private static final long CACHE_TTL_MS = 20_000; // 20s TTL for smooth remote responses
     private int nextBookSeq = 1249;
 
     private DataStore() {
@@ -42,13 +46,25 @@ public class DataStore {
         return dbAvailable;
     }
 
+    public void invalidateBooks() { lastBooksLoaded = 0; }
+    public void invalidateStudents() { lastStudentsLoaded = 0; }
+    public void invalidateTransactions() { lastTransactionsLoaded = 0; }
+    public void invalidateAll() {
+        lastBooksLoaded = 0;
+        lastStudentsLoaded = 0;
+        lastTransactionsLoaded = 0;
+    }
+
     /** Reload all caches from the database. */
     public void refreshCache() {
         if (!dbAvailable) return;
         try {
             cachedBooks = dbLoadBooks();
+            lastBooksLoaded = System.currentTimeMillis();
             cachedStudents = dbLoadStudents();
+            lastStudentsLoaded = System.currentTimeMillis();
             cachedTransactions = dbLoadTransactions();
+            lastTransactionsLoaded = System.currentTimeMillis();
         } catch (SQLException e) {
             System.err.println("[AutoLib DB] Cache refresh failed: " + e.getMessage());
         }
@@ -58,8 +74,17 @@ public class DataStore {
     //  BOOKS
     // ══════════════════════════════════════════════════════════════════════
     public List<Book> getBooks() {
-        if (dbAvailable) {
-            try { return dbLoadBooks(); } catch (SQLException e) { e.printStackTrace(); }
+        return getBooks(false);
+    }
+
+    public List<Book> getBooks(boolean forceRefresh) {
+        if (dbAvailable && (forceRefresh || System.currentTimeMillis() - lastBooksLoaded > CACHE_TTL_MS || cachedBooks.isEmpty())) {
+            try {
+                cachedBooks = dbLoadBooks();
+                lastBooksLoaded = System.currentTimeMillis();
+            } catch (SQLException e) {
+                System.err.println("[AutoLib DB] getBooks failed: " + e.getMessage());
+            }
         }
         return new ArrayList<>(cachedBooks);
     }
@@ -93,6 +118,7 @@ public class DataStore {
             }
         }
         cachedBooks.add(b);
+        invalidateBooks();
         return ok;
     }
 
@@ -107,6 +133,7 @@ public class DataStore {
                 } catch (SQLException e) { e.printStackTrace(); }
             }
             cachedBooks.remove(idx);
+            invalidateBooks();
         }
     }
 
@@ -121,6 +148,7 @@ public class DataStore {
                 ps.executeUpdate();
             } catch (SQLException e) { e.printStackTrace(); }
         }
+        invalidateBooks();
     }
 
     /** Persist a student's active_loans and overdue_count to the database. */
@@ -135,6 +163,7 @@ public class DataStore {
                 ps.executeUpdate();
             } catch (SQLException e) { e.printStackTrace(); }
         }
+        invalidateStudents();
     }
 
     /** Persist a student's NFC registration (nfc_registered and nfc_uid) to the database. */
@@ -149,6 +178,7 @@ public class DataStore {
                 ps.executeUpdate();
             } catch (SQLException e) { e.printStackTrace(); }
         }
+        invalidateStudents();
     }
 
     /** Persist updated student info (name, department, year level, NFC) to the database. */
@@ -171,6 +201,7 @@ public class DataStore {
                 ok = false;
             }
         }
+        invalidateStudents();
         return ok;
     }
 
@@ -188,6 +219,7 @@ public class DataStore {
             }
         }
         cachedStudents.removeIf(st -> st.getStudentId().equalsIgnoreCase(studentId));
+        invalidateStudents();
         return ok;
     }
 
@@ -234,8 +266,17 @@ public class DataStore {
     //  STUDENTS
     // ══════════════════════════════════════════════════════════════════════
     public List<Student> getStudents() {
-        if (dbAvailable) {
-            try { return dbLoadStudents(); } catch (SQLException e) { e.printStackTrace(); }
+        return getStudents(false);
+    }
+
+    public List<Student> getStudents(boolean forceRefresh) {
+        if (dbAvailable && (forceRefresh || System.currentTimeMillis() - lastStudentsLoaded > CACHE_TTL_MS || cachedStudents.isEmpty())) {
+            try {
+                cachedStudents = dbLoadStudents();
+                lastStudentsLoaded = System.currentTimeMillis();
+            } catch (SQLException e) {
+                System.err.println("[AutoLib DB] getStudents failed: " + e.getMessage());
+            }
         }
         return new ArrayList<>(cachedStudents);
     }
@@ -257,6 +298,7 @@ public class DataStore {
             } catch (SQLException e) { e.printStackTrace(); }
         }
         cachedStudents.add(s);
+        invalidateStudents();
     }
 
     public void removeStudent(int idx) {
@@ -270,6 +312,7 @@ public class DataStore {
                 } catch (SQLException e) { e.printStackTrace(); }
             }
             cachedStudents.remove(idx);
+            invalidateStudents();
         }
     }
 
@@ -277,6 +320,9 @@ public class DataStore {
         if (id == null) return null;
         String q = id.trim();
         if (q.isEmpty()) return null;
+        for (Student s : cachedStudents) {
+            if (s.getStudentId() != null && s.getStudentId().equalsIgnoreCase(q)) return s;
+        }
         if (dbAvailable) {
             try (Connection c = DBConnection.getConnection();
                  PreparedStatement ps = c.prepareStatement("SELECT * FROM students WHERE LOWER(student_id) = LOWER(?)")) {
@@ -286,9 +332,6 @@ public class DataStore {
                 }
             } catch (SQLException e) { e.printStackTrace(); }
         }
-        for (Student s : cachedStudents) {
-            if (s.getStudentId().equalsIgnoreCase(q)) return s;
-        }
         return null;
     }
 
@@ -296,6 +339,9 @@ public class DataStore {
         if (nfcUid == null) return null;
         String q = nfcUid.trim();
         if (q.isEmpty()) return null;
+        for (Student s : cachedStudents) {
+            if (s.getNfcUid() != null && s.getNfcUid().equalsIgnoreCase(q)) return s;
+        }
         if (dbAvailable) {
             try (Connection c = DBConnection.getConnection();
                  PreparedStatement ps = c.prepareStatement("SELECT * FROM students WHERE LOWER(nfc_uid) = LOWER(?)")) {
@@ -304,9 +350,6 @@ public class DataStore {
                     if (rs.next()) return mapStudent(rs);
                 }
             } catch (SQLException e) { e.printStackTrace(); }
-        }
-        for (Student s : cachedStudents) {
-            if (s.getNfcUid() != null && s.getNfcUid().equalsIgnoreCase(q)) return s;
         }
         return null;
     }
@@ -321,20 +364,20 @@ public class DataStore {
         if (s != null) return s;
 
         // Try without hyphens (e.g. "2510834" -> "25-10834")
+        String cleanQ = q.replace("-", "");
+        for (Student st : cachedStudents) {
+            if (st.getStudentId() != null && st.getStudentId().replace("-", "").equalsIgnoreCase(cleanQ)) return st;
+        }
+
         if (dbAvailable) {
             try (Connection c = DBConnection.getConnection();
                  PreparedStatement ps = c.prepareStatement(
                      "SELECT * FROM students WHERE REPLACE(student_id, '-', '') = LOWER(?)")) {
-                ps.setString(1, q.replace("-", ""));
+                ps.setString(1, cleanQ);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) return mapStudent(rs);
                 }
             } catch (SQLException e) { e.printStackTrace(); }
-        } else {
-            for (Student st : cachedStudents) {
-                String cleanId = st.getStudentId().replace("-", "");
-                if (cleanId.equalsIgnoreCase(q)) return st;
-            }
         }
 
         // Try NFC UID
@@ -342,16 +385,31 @@ public class DataStore {
     }
 
     public List<Student> searchStudents(String q, String dept) {
+        return searchStudents(q, dept, "All Status");
+    }
+
+    public List<Student> searchStudents(String q, String dept, String status) {
         List<Student> all = getStudents();
         List<Student> r = new ArrayList<>();
         String lq = q == null ? "" : q.toLowerCase().trim();
         for (Student s : all) {
             boolean matchQ = lq.isEmpty()
-                    || s.getName().toLowerCase().contains(lq)
-                    || s.getStudentId().toLowerCase().contains(lq)
-                    || s.getDepartment().toLowerCase().contains(lq);
-            boolean matchD = dept == null || dept.equals("All Departments") || s.getDepartment().equals(dept);
-            if (matchQ && matchD)
+                    || (s.getName() != null && s.getName().toLowerCase().contains(lq))
+                    || (s.getStudentId() != null && s.getStudentId().toLowerCase().contains(lq))
+                    || (s.getDepartment() != null && s.getDepartment().toLowerCase().contains(lq));
+            boolean matchD = dept == null || dept.equals("All Departments")
+                    || (s.getDepartment() != null && s.getDepartment().equalsIgnoreCase(dept.trim()));
+            boolean matchSt = true;
+            if (status != null && !status.equals("All Status")) {
+                if (status.equalsIgnoreCase("Borrowed")) {
+                    matchSt = (s.getActiveLoans() > 0 && s.getOverdueCount() == 0);
+                } else if (status.equalsIgnoreCase("Overdue")) {
+                    matchSt = (s.getOverdueCount() > 0);
+                } else if (status.equalsIgnoreCase("No Balance") || status.equalsIgnoreCase("Clear")) {
+                    matchSt = (s.getActiveLoans() == 0 && s.getOverdueCount() == 0);
+                }
+            }
+            if (matchQ && matchD && matchSt)
                 r.add(s);
         }
         return r;
@@ -361,8 +419,17 @@ public class DataStore {
     //  TRANSACTIONS
     // ══════════════════════════════════════════════════════════════════════
     public List<Transaction> getTransactions() {
-        if (dbAvailable) {
-            try { return dbLoadTransactions(); } catch (SQLException e) { e.printStackTrace(); }
+        return getTransactions(false);
+    }
+
+    public List<Transaction> getTransactions(boolean forceRefresh) {
+        if (dbAvailable && (forceRefresh || System.currentTimeMillis() - lastTransactionsLoaded > CACHE_TTL_MS || cachedTransactions.isEmpty())) {
+            try {
+                cachedTransactions = dbLoadTransactions();
+                lastTransactionsLoaded = System.currentTimeMillis();
+            } catch (SQLException e) {
+                System.err.println("[AutoLib DB] getTransactions failed: " + e.getMessage());
+            }
         }
         return new ArrayList<>(cachedTransactions);
     }
@@ -383,6 +450,7 @@ public class DataStore {
             } catch (SQLException e) { e.printStackTrace(); }
         }
         cachedTransactions.add(0, t);
+        invalidateTransactions();
     }
 
     // ------------------------------------------------------------------
@@ -460,6 +528,7 @@ public class DataStore {
         b.setAvailableCopies(b.getAvailableCopies() - 1);
         s.setActiveLoans(s.getActiveLoans() + 1);
         cachedTransactions.add(0, t);
+        invalidateAll();
         return null;
     }
 
@@ -505,6 +574,7 @@ public class DataStore {
         s.setActiveLoans(Math.max(0, s.getActiveLoans() - 1));
         if (wasOverdue) s.setOverdueCount(Math.max(0, s.getOverdueCount() - 1));
         cachedTransactions.add(0, t);
+        invalidateAll();
         return null;
     }
 
@@ -526,52 +596,27 @@ public class DataStore {
     //  DASHBOARD STATS
     // ══════════════════════════════════════════════════════════════════════
     public int totalBooks() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT COALESCE(SUM(total_copies),0) FROM books")) {
-                if (rs.next()) return rs.getInt(1);
-            } catch (SQLException e) { e.printStackTrace(); }
-        }
-        return cachedBooks.size();
+        int count = 0;
+        for (Book b : getBooks()) count += b.getTotalCopies();
+        return count;
     }
 
     public int currentlyBorrowed() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT COALESCE(SUM(total_copies - available_copies),0) FROM books")) {
-                if (rs.next()) return rs.getInt(1);
-            } catch (SQLException e) { e.printStackTrace(); }
-        }
         int count = 0;
-        for (Book b : cachedBooks) count += b.getBorrowedCount();
+        for (Book b : getBooks()) count += b.getBorrowedCount();
         return count;
     }
 
     public int overdueBooks() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM transactions WHERE type = 'OVERDUE'")) {
-                if (rs.next()) return rs.getInt(1);
-            } catch (SQLException e) { e.printStackTrace(); }
-        }
         int count = 0;
-        for (Transaction t : cachedTransactions)
+        for (Transaction t : getTransactions()) {
             if (t.getType() == Transaction.Type.OVERDUE) count++;
+        }
         return count;
     }
 
     public int registeredStudents() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM students")) {
-                if (rs.next()) return rs.getInt(1);
-            } catch (SQLException e) { e.printStackTrace(); }
-        }
-        return cachedStudents.size();
+        return getStudents().size();
     }
 
     public int[] weeklyBorrowData() {
@@ -650,32 +695,22 @@ public class DataStore {
     }
 
     public List<String> getSections() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT DISTINCT section FROM books ORDER BY section")) {
-                List<String> list = new ArrayList<>();
-                while (rs.next()) list.add(rs.getString(1));
-                return list;
-            } catch (SQLException e) { e.printStackTrace(); }
+        Set<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (Book b : getBooks()) {
+            if (b.getSection() != null && !b.getSection().trim().isEmpty()) {
+                set.add(b.getSection().trim());
+            }
         }
-        Set<String> set = new LinkedHashSet<>();
-        for (Book b : cachedBooks) set.add(b.getSection());
         return new ArrayList<>(set);
     }
 
     public List<String> getDepartments() {
-        if (dbAvailable) {
-            try (Connection c = DBConnection.getConnection();
-                 Statement s = c.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT DISTINCT department FROM students ORDER BY department")) {
-                List<String> list = new ArrayList<>();
-                while (rs.next()) list.add(rs.getString(1));
-                return list;
-            } catch (SQLException e) { e.printStackTrace(); }
+        Set<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (Student s : getStudents()) {
+            if (s.getDepartment() != null && !s.getDepartment().trim().isEmpty()) {
+                set.add(s.getDepartment().trim());
+            }
         }
-        Set<String> set = new LinkedHashSet<>();
-        for (Student s : cachedStudents) set.add(s.getDepartment());
         return new ArrayList<>(set);
     }
 

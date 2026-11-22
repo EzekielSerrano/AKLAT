@@ -369,9 +369,10 @@ public class LibrarianPortalFX {
 
     /** Called after the desk saves a transaction so every other page reloads fresh data. */
     public void refreshAll() {
+        DataStore.get().invalidateAll();
         dashboardNode = catalogNode = studentsNode = transactionsNode = reportsNode = null;
     }
-    public void refreshCatalog()  { catalogNode = null; }
-    public void refreshStudents() { studentsNode = null; }
+    public void refreshCatalog()  { DataStore.get().invalidateBooks(); catalogNode = null; }
+    public void refreshStudents() { DataStore.get().invalidateStudents(); studentsNode = null; }
     public Stage getStage() { return stage; }
 }
