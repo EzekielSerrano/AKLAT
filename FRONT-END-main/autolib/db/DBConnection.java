@@ -9,7 +9,7 @@ import java.sql.SQLException;
  */
 public class DBConnection {
 
-    private static final String DEFAULT_HOST = "192.168.254.125";
+    private static final String DEFAULT_HOST = "192.168.2.2";
     private static final String DEFAULT_PORT = "5432";
     private static final String DEFAULT_DB   = "autolib_db";
     private static final String DEFAULT_USER = "postgres";
