@@ -13,6 +13,8 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
@@ -62,7 +64,7 @@ public class CirculationFX {
     private VBox cartList;
     private TextField scanField;
     private Label stepPill, scanCaption, cartCount, summaryLabel;
-    private Button cameraBtn, enterBtn, completeBtn, cancelBtn;
+    private Button cameraBtn, searchTitleBtn, enterBtn, completeBtn, cancelBtn;
     private HBox banner;
     private Label bannerLabel;
 
@@ -144,7 +146,11 @@ public class CirculationFX {
         cameraBtn.setPrefHeight(44);
         cameraBtn.setOnAction(e -> openCamera());
 
-        HBox scanRow = new HBox(8, scanField, enterBtn, cameraBtn);
+        searchTitleBtn = FXComponents.ghostButton("\uD83D\uDD0D Search Title");
+        searchTitleBtn.setPrefHeight(44);
+        searchTitleBtn.setOnAction(e -> openTitleSearchDialog(""));
+
+        HBox scanRow = new HBox(8, scanField, enterBtn, cameraBtn, searchTitleBtn);
         scanRow.setAlignment(Pos.CENTER);
 
         cartCount = new Label();
@@ -224,15 +230,16 @@ public class CirculationFX {
         boolean hasStudent = student != null;
 
         if (hasStudent) {
-            setPill(stepPill, "STEP 2  Scan the books", FXComponents.BLUE);
-            scanCaption.setText("BOOK BARCODE / ISBN");
-            scanField.setPromptText("Scan the book barcode, then press Enter");
+            setPill(stepPill, "STEP 2  Scan or search the books", FXComponents.BLUE);
+            scanCaption.setText("BOOK BARCODE / ISBN OR SEARCH TITLE");
+            scanField.setPromptText("Scan barcode, type ISBN, or type title and press Enter");
         } else {
             setPill(stepPill, "STEP 1  Scan student ID", FXComponents.AMBER);
             scanCaption.setText("STUDENT ID  (NFC TAP OR SR-CODE)");
             scanField.setPromptText("Tap the NFC card or type the student ID, then press Enter");
         }
         cameraBtn.setDisable(!hasStudent);
+        searchTitleBtn.setDisable(!hasStudent);
 
         cartList.getChildren().clear();
         if (cart.isEmpty()) {
@@ -362,14 +369,26 @@ public class CirculationFX {
             return;
         }
 
-        // Step 2  a book?
+        // Step 2 – a book?
         Book b = db.findBookByCode(code);
         if (b != null) {
             addBook(b);
             return;
         }
 
-        // Not a book  maybe the next student tapped their card
+        // Not a barcode/ISBN – check if it matches book titles in catalog
+        List<Book> titleMatches = db.searchBooks(code, "All Sections", "All Status");
+        if (!titleMatches.isEmpty()) {
+            if (titleMatches.size() == 1) {
+                addBook(titleMatches.get(0));
+                return;
+            } else {
+                openTitleSearchDialog(code);
+                return;
+            }
+        }
+
+        // Not a book – maybe the next student tapped their card
         Student other = db.findStudentByIdOrNfc(code);
         if (other != null) {
             if (other.getStudentId().equalsIgnoreCase(student.getStudentId())) {
@@ -384,7 +403,236 @@ public class CirculationFX {
         }
 
         FXComponents.shake(scanField);
-        setBanner("\"" + code + "\" isn't a book in the catalog. Check the barcode, or add the book in Book Catalog first.", "error");
+        setBanner("\"" + code + "\" isn't a book in the catalog. Check the barcode or use Search Title.", "error");
+    }
+
+    private void openTitleSearchDialog(String initialQuery) {
+        if (student == null) {
+            setBanner("Please scan or enter student ID first before selecting books.", "warn");
+            return;
+        }
+
+        Stage owner = null;
+        if (scanField != null && scanField.getScene() != null && scanField.getScene().getWindow() instanceof Stage) {
+            owner = (Stage) scanField.getScene().getWindow();
+        }
+
+        Dialog<Void> dlg = new Dialog<>();
+        if (owner != null) dlg.initOwner(owner);
+        dlg.setTitle("Search Book to Borrow or Return — A.K.L.A.T.");
+        dlg.setHeaderText(null);
+
+        VBox content = new VBox(12);
+        content.setPrefWidth(640);
+        content.setPrefHeight(500);
+        content.setPadding(new Insets(16));
+        content.setStyle("-fx-background-color:#F8F9FC;");
+
+        HBox searchBar = new HBox(10);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        TextField qField = FXComponents.inputField("Search book by title, author, or barcode…");
+        qField.setPrefHeight(42);
+        qField.setFont(Font.font("Segoe UI", 13));
+        HBox.setHgrow(qField, Priority.ALWAYS);
+        if (initialQuery != null && !initialQuery.trim().isEmpty()) {
+            qField.setText(initialQuery.trim());
+        }
+
+        Button clearBtn = FXComponents.ghostButton("Clear");
+        clearBtn.setPrefHeight(42);
+        clearBtn.setOnAction(e -> { qField.clear(); qField.requestFocus(); });
+        searchBar.getChildren().addAll(qField, clearBtn);
+
+        VBox resultsBox = new VBox(10);
+        ScrollPane sp = new ScrollPane(resultsBox);
+        sp.setFitToWidth(true);
+        sp.setStyle("-fx-background-color:transparent; -fx-background:transparent;");
+        VBox.setVgrow(sp, Priority.ALWAYS);
+
+        Runnable refreshList = () -> {
+            resultsBox.getChildren().clear();
+            String q = qField.getText().trim().toLowerCase();
+
+            // 1. ACTIVE LOANS (Return candidates)
+            List<Transaction> activeLoans = KioskProfileCardFX.activeLoans(student);
+            List<Transaction> matchingLoans = new ArrayList<>();
+            for (Transaction tx : activeLoans) {
+                if (q.isEmpty()
+                        || (tx.getBookTitle() != null && tx.getBookTitle().toLowerCase().contains(q))
+                        || (tx.getBookBarcode() != null && tx.getBookBarcode().toLowerCase().contains(q))) {
+                    matchingLoans.add(tx);
+                }
+            }
+
+            if (!matchingLoans.isEmpty()) {
+                Label loanSection = new Label("STUDENT'S BORROWED BOOKS (CLICK TO RETURN)");
+                loanSection.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+                loanSection.setTextFill(Color.web("#8B1A2B"));
+                resultsBox.getChildren().add(loanSection);
+
+                for (Transaction tx : matchingLoans) {
+                    Book b = db.findBookByCode(tx.getBookBarcode());
+                    if (b == null) {
+                        b = new Book(tx.getBookBarcode(), tx.getBookTitle(), "", "", "", 1, 0);
+                    }
+                    final Book bookToReturn = b;
+
+                    boolean alreadyInCart = false;
+                    for (Line l : cart) {
+                        if (l.book.getBarcode().equalsIgnoreCase(bookToReturn.getBarcode())) {
+                            alreadyInCart = true;
+                            break;
+                        }
+                    }
+
+                    HBox item = new HBox(12);
+                    item.setAlignment(Pos.CENTER_LEFT);
+                    item.setPadding(new Insets(10, 14, 10, 14));
+                    item.setStyle("-fx-background-color:#FFF5F5; -fx-border-color:#FCDAD7; -fx-border-radius:8; -fx-background-radius:8;");
+
+                    Label retBadge = FXComponents.txBadge("Returned");
+                    retBadge.setText("ACTIVE LOAN");
+
+                    VBox bookInfo = new VBox(2);
+                    Label tLbl = new Label(tx.getBookTitle());
+                    tLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+                    tLbl.setTextFill(Color.web(FXComponents.T_PRIMARY));
+
+                    LocalDate due = tx.getTimestamp().toLocalDate().plusDays(KioskProfileCardFX.LOAN_DAYS);
+                    long late = ChronoUnit.DAYS.between(due, LocalDate.now());
+                    String dueText = (late > 0 ? "⚠ Late " + late + " day(s)" : "Due " + due.format(DATE_FMT));
+                    Label sLbl = new Label("Barcode: " + tx.getBookBarcode() + "  •  " + dueText);
+                    sLbl.setFont(Font.font("Segoe UI", 11));
+                    sLbl.setTextFill(late > 0 ? Color.web(FXComponents.RED) : Color.web(FXComponents.T_MUTED));
+                    bookInfo.getChildren().addAll(tLbl, sLbl);
+                    HBox.setHgrow(bookInfo, Priority.ALWAYS);
+
+                    Button actBtn;
+                    if (alreadyInCart) {
+                        actBtn = new Button("In Cart");
+                        actBtn.setDisable(true);
+                        actBtn.setStyle("-fx-background-color:#E2E8F0; -fx-text-fill:#718096; -fx-background-radius:6; -fx-padding:6 12;");
+                    } else {
+                        actBtn = FXComponents.primaryButton("↩ Return");
+                        actBtn.setStyle("-fx-background-color:#C0392B; -fx-text-fill:white; -fx-font-weight:bold; -fx-background-radius:6; -fx-padding:6 14; -fx-cursor:hand;");
+                        actBtn.setOnAction(ev -> {
+                            addBook(bookToReturn);
+                            dlg.setResult(null);
+                            dlg.close();
+                            focusScan();
+                        });
+                    }
+                    item.getChildren().addAll(retBadge, bookInfo, actBtn);
+                    resultsBox.getChildren().add(item);
+                }
+            }
+
+            // 2. CATALOG BOOKS (Borrow candidates)
+            List<Book> matches = db.searchBooks(q, "All Sections", "All Status");
+            Label catSection = new Label("LIBRARY CATALOG (CLICK TO BORROW)");
+            catSection.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+            catSection.setTextFill(Color.web("#3A5BBE"));
+            catSection.setPadding(new Insets(10, 0, 0, 0));
+            resultsBox.getChildren().add(catSection);
+
+            if (matches.isEmpty()) {
+                Label noMatch = new Label("No matching books found for \"" + q + "\"");
+                noMatch.setFont(Font.font("Segoe UI", 12));
+                noMatch.setTextFill(Color.web(FXComponents.T_MUTED));
+                noMatch.setPadding(new Insets(12, 0, 12, 0));
+                resultsBox.getChildren().add(noMatch);
+            } else {
+                int limit = Math.min(matches.size(), 30);
+                for (int i = 0; i < limit; i++) {
+                    Book b = matches.get(i);
+                    boolean alreadyInCart = false;
+                    for (Line l : cart) {
+                        if (l.book.getBarcode().equalsIgnoreCase(b.getBarcode())) {
+                            alreadyInCart = true;
+                            break;
+                        }
+                    }
+
+                    boolean isHeldByStudent = false;
+                    for (Transaction tx : activeLoans) {
+                        if (tx.getBookBarcode().equalsIgnoreCase(b.getBarcode())) {
+                            isHeldByStudent = true;
+                            break;
+                        }
+                    }
+
+                    HBox item = new HBox(12);
+                    item.setAlignment(Pos.CENTER_LEFT);
+                    item.setPadding(new Insets(10, 14, 10, 14));
+                    item.setStyle("-fx-background-color:white; -fx-border-color:#E2E8F0; -fx-border-radius:8; -fx-background-radius:8;");
+
+                    VBox bookInfo = new VBox(2);
+                    Label tLbl = new Label(b.getTitle());
+                    tLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+                    tLbl.setTextFill(Color.web(FXComponents.T_PRIMARY));
+
+                    Label sLbl = new Label("Author: " + (b.getAuthor() == null || b.getAuthor().isEmpty() ? "Unknown" : b.getAuthor())
+                        + "  •  Section: " + b.getSection()
+                        + "  •  Available: " + b.getAvailableCopies() + "/" + b.getTotalCopies());
+                    sLbl.setFont(Font.font("Segoe UI", 11));
+                    sLbl.setTextFill(Color.web(FXComponents.T_MUTED));
+                    bookInfo.getChildren().addAll(tLbl, sLbl);
+                    HBox.setHgrow(bookInfo, Priority.ALWAYS);
+
+                    Button actBtn;
+                    if (alreadyInCart) {
+                        actBtn = new Button("In Cart");
+                        actBtn.setDisable(true);
+                        actBtn.setStyle("-fx-background-color:#E2E8F0; -fx-text-fill:#718096; -fx-background-radius:6; -fx-padding:6 12;");
+                    } else if (isHeldByStudent) {
+                        actBtn = FXComponents.ghostButton("↩ Return");
+                        actBtn.setStyle("-fx-background-color:#FFF1F2; -fx-text-fill:#C0392B; -fx-border-color:#FECDD3; -fx-font-weight:bold; -fx-background-radius:6; -fx-padding:6 12; -fx-cursor:hand;");
+                        actBtn.setOnAction(ev -> {
+                            addBook(b);
+                            dlg.setResult(null);
+                            dlg.close();
+                            focusScan();
+                        });
+                    } else if (b.getAvailableCopies() <= 0) {
+                        actBtn = new Button("No Copies");
+                        actBtn.setDisable(true);
+                        actBtn.setStyle("-fx-background-color:#F1F5F9; -fx-text-fill:#94A3B8; -fx-background-radius:6; -fx-padding:6 12;");
+                    } else {
+                        actBtn = FXComponents.primaryButton("⊞ Borrow");
+                        actBtn.setStyle("-fx-background-color:#3A5BBE; -fx-text-fill:white; -fx-font-weight:bold; -fx-background-radius:6; -fx-padding:6 14; -fx-cursor:hand;");
+                        actBtn.setOnAction(ev -> {
+                            addBook(b);
+                            dlg.setResult(null);
+                            dlg.close();
+                            focusScan();
+                        });
+                    }
+                    item.getChildren().addAll(bookInfo, actBtn);
+                    resultsBox.getChildren().add(item);
+                }
+            }
+        };
+
+        qField.textProperty().addListener((obs, oldVal, newVal) -> refreshList.run());
+        refreshList.run();
+
+        Button dismissBtn = FXComponents.ghostButton("Close");
+        dismissBtn.setOnAction(e -> { dlg.setResult(null); dlg.close(); focusScan(); });
+        HBox botBar = new HBox(dismissBtn);
+        botBar.setAlignment(Pos.CENTER_RIGHT);
+
+        content.getChildren().addAll(searchBar, sp, botBar);
+        dlg.getDialogPane().setContent(content);
+        dlg.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        Node closeBtn = dlg.getDialogPane().lookupButton(ButtonType.CLOSE);
+        if (closeBtn != null) {
+            closeBtn.setVisible(false);
+            closeBtn.setManaged(false);
+        }
+
+        Platform.runLater(qField::requestFocus);
+        dlg.showAndWait();
+        focusScan();
     }
 
     private void loadStudent(Student s) {
