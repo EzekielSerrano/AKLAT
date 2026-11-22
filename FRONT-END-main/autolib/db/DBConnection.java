@@ -15,9 +15,33 @@ public class DBConnection {
     private static final String DEFAULT_USER = "postgres";
     private static final String DEFAULT_PASS = "postgres";
 
-    private static String url = String.format("jdbc:postgresql://%s:%s/%s", DEFAULT_HOST, DEFAULT_PORT, DEFAULT_DB);
+    // Try localhost first (when running on the server PC itself),
+    // then fall back to the LAN IP (for client PCs on the network).
+    private static String url = resolveUrl();
     private static String user = DEFAULT_USER;
     private static String password = DEFAULT_PASS;
+
+    /**
+     * Tries localhost first; if that fails, uses the LAN IP.
+     * This makes the app work both on the server PC and on remote PCs.
+     */
+    private static String resolveUrl() {
+        // Attempt localhost first
+        String localUrl = String.format("jdbc:postgresql://localhost:%s/%s", DEFAULT_PORT, DEFAULT_DB);
+        try {
+            Class.forName("org.postgresql.Driver");
+            java.sql.Connection c = java.sql.DriverManager.getConnection(localUrl, DEFAULT_USER, DEFAULT_PASS);
+            if (c != null && !c.isClosed()) {
+                c.close();
+                System.out.println("[AutoLib DB] Using localhost connection.");
+                return localUrl;
+            }
+        } catch (Exception ignored) {
+            // localhost not available, try LAN IP
+        }
+        System.out.println("[AutoLib DB] Localhost unavailable, using LAN IP: " + DEFAULT_HOST);
+        return String.format("jdbc:postgresql://%s:%s/%s", DEFAULT_HOST, DEFAULT_PORT, DEFAULT_DB);
+    }
 
     static {
         try {
