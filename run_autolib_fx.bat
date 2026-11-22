@@ -36,13 +36,12 @@ echo [1/2] Compiling A.K.L.A.T. JavaFX...
   autolib\fx\panels\DashboardFX.java ^
   autolib\fx\panels\BookCatalogFX.java ^
   autolib\fx\panels\StudentsFX.java ^
+  autolib\fx\panels\CirculationFX.java ^
   autolib\fx\panels\TransactionsFX.java ^
   autolib\fx\panels\ReportsFX.java ^
   autolib\fx\panels\SettingsFX.java ^
   autolib\fx\kiosk\KioskDashboardFX.java ^
-  autolib\fx\kiosk\KioskBorrowFX.java ^
   autolib\fx\kiosk\KioskProfileCardFX.java ^
-  autolib\fx\kiosk\KioskReturnFX.java ^
   autolib\fx\kiosk\KioskHistoryFX.java ^
   autolib\fx\kiosk\KioskProfileFX.java ^
   autolib\models\Book.java ^

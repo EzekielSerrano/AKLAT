@@ -29,7 +29,7 @@ public class LibrarianPortalFX {
     private Button activeNavBtn;
 
     // Lazy panels
-    private Node dashboardNode, catalogNode, studentsNode,
+    private Node dashboardNode, circulationNode, catalogNode, studentsNode,
                  transactionsNode, reportsNode, settingsNode;
 
     public LibrarianPortalFX(Stage stage) {
@@ -69,7 +69,8 @@ public class LibrarianPortalFX {
         Button dashBtn = navItem("⌂  Dashboard", true);
         Button bookBtn = navItem("⊞  Book Catalog", false);
         Button stuBtn  = navItem("☺  Students", false);
-        sb.getChildren().addAll(dashBtn, bookBtn, stuBtn);
+        Button circBtn = navItem("\u21C4  Borrow & Return", false);
+        sb.getChildren().addAll(dashBtn, circBtn, bookBtn, stuBtn);
 
         sb.getChildren().add(sectionLabel("REPORTS"));
         Button txBtn  = navItem("⇄  Transactions", false);
@@ -88,6 +89,7 @@ public class LibrarianPortalFX {
 
         activeNavBtn = dashBtn;
         dashBtn.setOnAction(e    -> navigate(dashBtn, "Dashboard"));
+        circBtn.setOnAction(e    -> navigate(circBtn, "Borrow & Return"));
         bookBtn.setOnAction(e    -> navigate(bookBtn, "Book Catalog"));
         stuBtn.setOnAction(e     -> navigate(stuBtn, "Students"));
         txBtn.setOnAction(e      -> navigate(txBtn, "Transactions"));
@@ -306,6 +308,7 @@ public class LibrarianPortalFX {
         activeNavBtn = btn;
 
         Node panel = switch (panelName) {
+            case "Borrow & Return" -> getCirculation();
             case "Book Catalog"  -> getCatalog();
             case "Students"      -> getStudents();
             case "Transactions"  -> getTransactions();
@@ -339,6 +342,10 @@ public class LibrarianPortalFX {
         if (dashboardNode == null) dashboardNode = new DashboardFX(this).build();
         return dashboardNode;
     }
+    private Node getCirculation() {
+        if (circulationNode == null) circulationNode = new CirculationFX(this).build();
+        return circulationNode;
+    }
     private Node getCatalog() {
         if (catalogNode == null) catalogNode = new BookCatalogFX(this).build();
         return catalogNode;
@@ -360,6 +367,10 @@ public class LibrarianPortalFX {
         return settingsNode;
     }
 
+    /** Called after the desk saves a transaction so every other page reloads fresh data. */
+    public void refreshAll() {
+        dashboardNode = catalogNode = studentsNode = transactionsNode = reportsNode = null;
+    }
     public void refreshCatalog()  { catalogNode = null; }
     public void refreshStudents() { studentsNode = null; }
     public Stage getStage() { return stage; }

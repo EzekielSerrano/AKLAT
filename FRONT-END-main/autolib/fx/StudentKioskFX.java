@@ -45,10 +45,9 @@ public class StudentKioskFX {
     private StackPane contentArea;
     private Label pageTitleLabel;
     private Button activeNavBtn;
-    private Button borrowNavBtn;
 
-    // Lazy panels
-    private Node dashNode, borrowNode, returnNode, histNode, profileNode;
+    // Lazy panels (view-only: borrowing & returning is handled at the librarian's desk)
+    private Node dashNode, histNode, profileNode;
 
     public StudentKioskFX(Stage stage) { this.stage = stage; }
 
@@ -326,9 +325,7 @@ public class StudentKioskFX {
         bar.setAlignment(Pos.CENTER);
         bar.setPadding(new Insets(10, 0, 14, 0));
         bar.getChildren().addAll(
-            FXComponents.statusDot("NFC Reader Online", true),
-            FXComponents.statusDot("Barcode Scanner Online", true),
-            FXComponents.statusDot("Printer Offline", false)
+            FXComponents.statusDot("NFC Reader Online", true)
         );
         return bar;
     }
@@ -338,7 +335,7 @@ public class StudentKioskFX {
     // ─────────────────────────────────────────────────────────────────────
     private void loginStudent(Student s) {
         this.currentStudent = s;
-        this.dashNode = this.borrowNode = this.returnNode = this.histNode = this.profileNode = null;
+        this.dashNode = this.histNode = this.profileNode = null;
 
         HBox root = new HBox(0);
         root.setStyle("-fx-background-color:#F4F6FA;");
@@ -355,8 +352,8 @@ public class StudentKioskFX {
         FXComponents.slideIn(sidebar, 220);
         String first = s.getName() == null ? "" : s.getName().split("[,\\s]+")[0];
         FXComponents.showToast(stackRoot, "Welcome, " + first + "!", "success");
-        // Land on the Borrow screen (profile card + scanner/search) right after tap-in
-        navTo(borrowNavBtn, "Borrow a Book", getBorrow());
+        // Land on the account dashboard right after tap-in
+        navTo(activeNavBtn, "Dashboard", getDash());
     }
 
     private VBox buildDashSidebar() {
@@ -382,11 +379,9 @@ public class StudentKioskFX {
         logoRow.getChildren().addAll(icon, txt);
         sb.getChildren().add(logoRow);
 
-        sb.getChildren().add(sectionLabel("SERVICES"));
+        sb.getChildren().add(sectionLabel("OVERVIEW"));
         Button dashBtn   = navItem("⌂   Dashboard", true);
-        Button borrowBtn = navItem("⊞   Borrow a Book", false);
-        Button returnBtn = navItem("↩   Return a Book", false);
-        sb.getChildren().addAll(dashBtn, borrowBtn, returnBtn);
+        sb.getChildren().add(dashBtn);
 
         sb.getChildren().add(sectionLabel("ACCOUNT"));
         Button histBtn    = navItem("⇄   My History", false);
@@ -399,10 +394,7 @@ public class StudentKioskFX {
         sb.getChildren().add(buildStudentCard());
 
         activeNavBtn = dashBtn;
-        borrowNavBtn = borrowBtn;
         dashBtn.setOnAction(e    -> navTo(dashBtn,   "Dashboard",     getDash()));
-        borrowBtn.setOnAction(e  -> navTo(borrowBtn, "Borrow a Book", getBorrow()));
-        returnBtn.setOnAction(e  -> navTo(returnBtn, "Return a Book", getReturn()));
         histBtn.setOnAction(e    -> navTo(histBtn,   "My History",    getHist()));
         profileBtn.setOnAction(e -> navTo(profileBtn,"My Profile",    getProfile()));
 
@@ -521,21 +513,15 @@ public class StudentKioskFX {
     // Lazy panel helpers
     // ─────────────────────────────────────────────────────────────────────
     private Node getDash()    { if (dashNode    == null) dashNode    = new KioskDashboardFX(this, currentStudent).build(); return dashNode; }
-    private Node getBorrow()  { if (borrowNode  == null) borrowNode  = new KioskBorrowFX(this, currentStudent).build();    return borrowNode; }
-    private Node getReturn()  { if (returnNode  == null) returnNode  = new KioskReturnFX(this, currentStudent).build();    return returnNode; }
     private Node getHist()    { if (histNode    == null) histNode    = new KioskHistoryFX(this, currentStudent).build();   return histNode; }
     private Node getProfile() { if (profileNode == null) profileNode = new KioskProfileFX(this, currentStudent).build();  return profileNode; }
 
-    public void refreshReturn() { returnNode = null; }
-    public void refreshBorrow() { borrowNode = null; }
     public void refreshDash()   { dashNode   = null; }
 
     // Public nav for panel buttons
     public void navigateTo(String panelName) {
         // Find nav button by panel name and simulate click via re-using navTo pattern
         Node panel = switch (panelName) {
-            case "Borrow a Book" -> { refreshBorrow(); yield getBorrow(); }
-            case "Return a Book" -> { refreshReturn(); yield getReturn(); }
             case "My History"    -> getHist();
             case "My Profile"    -> getProfile();
             default              -> { refreshDash(); yield getDash(); }

@@ -248,7 +248,7 @@ public class KioskProfileCardFX {
     }
 
     private Node buildOverdueNote() {
-        Label l = new Label("Overdue books add a ₱5.00 / day penalty. Please return them at the counter or use Return a Book.");
+        Label l = new Label("Overdue books add a ₱5.00 / day penalty. Please return them at the librarian's desk.");
         l.setFont(Font.font("Segoe UI", 10.5));
         l.setTextFill(Color.web("#FFB3B9"));
         l.setWrapText(true);

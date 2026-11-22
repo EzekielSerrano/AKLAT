@@ -67,18 +67,22 @@ public class KioskDashboardFX {
         qCard.getStyleClass().add("card");
         qCard.setPadding(new Insets(16, 18, 16, 18));
 
-        HBox hdr = FXComponents.cardHeader("Quick Actions", null);
+        HBox hdr = FXComponents.cardHeader("Quick Links", null);
 
         HBox btns = new HBox(10);
-        Button borrowBtn = FXComponents.primaryButton("⊞  Borrow a Book");
-        Button returnBtn = FXComponents.ghostButton("↩  Return a Book");
-        Button histBtn   = FXComponents.ghostButton("⇄  View History");
-        borrowBtn.setOnAction(e -> kiosk.navigateTo("Borrow a Book"));
-        returnBtn.setOnAction(e -> kiosk.navigateTo("Return a Book"));
-        histBtn.setOnAction(e   -> kiosk.navigateTo("My History"));
-        btns.getChildren().addAll(borrowBtn, returnBtn, histBtn);
+        Button histBtn    = FXComponents.primaryButton("  View History");
+        Button profileBtn = FXComponents.ghostButton("  My Profile");
+        histBtn.setOnAction(e    -> kiosk.navigateTo("My History"));
+        profileBtn.setOnAction(e -> kiosk.navigateTo("My Profile"));
+        btns.getChildren().addAll(histBtn, profileBtn);
 
-        qCard.getChildren().addAll(hdr, btns);
+        Label deskNote = new Label("To borrow or return a book, please proceed to the librarian's desk "
+            + "and present your student ID together with the book.");
+        deskNote.setFont(Font.font("Segoe UI", 11));
+        deskNote.setTextFill(Color.web(FXComponents.T_MUTED));
+        deskNote.setWrapText(true);
+
+        qCard.getChildren().addAll(hdr, btns, deskNote);
 
         content.getChildren().addAll(statsRow, midRow, qCard);
         sp.setContent(content);

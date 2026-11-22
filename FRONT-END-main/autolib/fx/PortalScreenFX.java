@@ -684,7 +684,7 @@ public class PortalScreenFX {
 
         HBox stuBtn = FXComponents.portalButton(
             "Student / Borrower Kiosk",
-            "NFC tap or Student ID to borrow & return books",
+            "NFC tap or Student ID to view your account & loans",
             "◉",
             "#3B82F6"
         );

@@ -385,6 +385,143 @@ public class DataStore {
         cachedTransactions.add(0, t);
     }
 
+    // ------------------------------------------------------------------
+    //  CIRCULATION  (librarian desk: scan student ID + scan book)
+    // ------------------------------------------------------------------
+
+    /** Finds a book by barcode (e.g. BK-00492) or ISBN. Spaces / hyphens / case are ignored. */
+    public Book findBookByCode(String code) {
+        if (code == null) return null;
+        String n = code.trim().toLowerCase().replaceAll("[\\s-]", "");
+        if (n.isEmpty()) return null;
+        if (dbAvailable) {
+            try (Connection c = DBConnection.getConnection();
+                 PreparedStatement ps = c.prepareStatement(
+                     "SELECT * FROM books WHERE " +
+                     "LOWER(REPLACE(REPLACE(barcode,'-',''),' ','')) = ? " +
+                     "OR LOWER(REPLACE(REPLACE(COALESCE(isbn,''),'-',''),' ','')) = ? LIMIT 1")) {
+                ps.setString(1, n);
+                ps.setString(2, n);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) return mapBook(rs);
+                }
+                return null;
+            } catch (SQLException e) { e.printStackTrace(); }
+        }
+        for (Book b : cachedBooks) {
+            String bc = b.getBarcode() == null ? "" : b.getBarcode().toLowerCase().replaceAll("[\\s-]", "");
+            String is = b.getIsbn() == null ? "" : b.getIsbn().toLowerCase().replaceAll("[\\s-]", "");
+            if (bc.equals(n) || (!is.isEmpty() && is.equals(n))) return b;
+        }
+        return null;
+    }
+
+    /**
+     * Records a BORROW at the librarian's desk. The book copy count, the student's active loans
+     * and the transaction row are written in ONE database transaction (all or nothing).
+     * Updates the passed-in Book / Student objects on success.
+     *
+     * @return null on success, otherwise a human-readable error message.
+     */
+    public String checkoutBook(Student s, Book b) {
+        Transaction t = new Transaction(s.getName(), s.getStudentId(), b.getTitle(),
+                b.getBarcode(), Transaction.Type.BORROWED, LocalDateTime.now());
+        if (dbAvailable) {
+            try (Connection c = DBConnection.getConnection()) {
+                c.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = c.prepareStatement(
+                            "UPDATE books SET available_copies = available_copies - 1 " +
+                            "WHERE barcode = ? AND available_copies > 0")) {
+                        ps.setString(1, b.getBarcode());
+                        if (ps.executeUpdate() == 0) {
+                            c.rollback();
+                            return "No copies of \"" + b.getTitle() + "\" are available.";
+                        }
+                    }
+                    try (PreparedStatement ps = c.prepareStatement(
+                            "UPDATE students SET active_loans = active_loans + 1 WHERE student_id = ?")) {
+                        ps.setString(1, s.getStudentId());
+                        ps.executeUpdate();
+                    }
+                    insertTransaction(c, t);
+                    c.commit();
+                } catch (SQLException e) {
+                    c.rollback();
+                    throw e;
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return "Database error: " + e.getMessage();
+            }
+        } else if (b.getAvailableCopies() <= 0) {
+            return "No copies of \"" + b.getTitle() + "\" are available.";
+        }
+        b.setAvailableCopies(b.getAvailableCopies() - 1);
+        s.setActiveLoans(s.getActiveLoans() + 1);
+        cachedTransactions.add(0, t);
+        return null;
+    }
+
+    /**
+     * Records a RETURN at the librarian's desk (single database transaction, same as checkoutBook).
+     *
+     * @param wasOverdue true if the loan was flagged OVERDUE, so the student's overdue counter drops
+     * @param daysLate   days past the due date (0 if on time); stored on the RETURNED row
+     * @return null on success, otherwise a human-readable error message.
+     */
+    public String checkinBook(Student s, Book b, boolean wasOverdue, int daysLate) {
+        Transaction t = new Transaction(s.getName(), s.getStudentId(), b.getTitle(),
+                b.getBarcode(), Transaction.Type.RETURNED, LocalDateTime.now(), Math.max(0, daysLate));
+        if (dbAvailable) {
+            try (Connection c = DBConnection.getConnection()) {
+                c.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = c.prepareStatement(
+                            "UPDATE books SET available_copies = LEAST(available_copies + 1, total_copies) " +
+                            "WHERE barcode = ?")) {
+                        ps.setString(1, b.getBarcode());
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = c.prepareStatement(
+                            "UPDATE students SET active_loans = GREATEST(active_loans - 1, 0), " +
+                            "overdue_count = GREATEST(overdue_count - ?, 0) WHERE student_id = ?")) {
+                        ps.setInt(1, wasOverdue ? 1 : 0);
+                        ps.setString(2, s.getStudentId());
+                        ps.executeUpdate();
+                    }
+                    insertTransaction(c, t);
+                    c.commit();
+                } catch (SQLException e) {
+                    c.rollback();
+                    throw e;
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return "Database error: " + e.getMessage();
+            }
+        }
+        b.setAvailableCopies(Math.min(b.getTotalCopies(), b.getAvailableCopies() + 1));
+        s.setActiveLoans(Math.max(0, s.getActiveLoans() - 1));
+        if (wasOverdue) s.setOverdueCount(Math.max(0, s.getOverdueCount() - 1));
+        cachedTransactions.add(0, t);
+        return null;
+    }
+
+    private void insertTransaction(Connection c, Transaction t) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO transactions (student_name,student_id,book_title,book_barcode,type,days_overdue,transaction_time) VALUES (?,?,?,?,?,?,?)")) {
+            ps.setString(1, t.getStudentName());
+            ps.setString(2, t.getStudentId());
+            ps.setString(3, t.getBookTitle());
+            ps.setString(4, t.getBookBarcode());
+            ps.setString(5, t.getType().name());
+            ps.setInt(6, t.getDaysOverdue());
+            ps.setTimestamp(7, Timestamp.valueOf(t.getTimestamp()));
+            ps.executeUpdate();
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     //  DASHBOARD STATS
     // ══════════════════════════════════════════════════════════════════════
