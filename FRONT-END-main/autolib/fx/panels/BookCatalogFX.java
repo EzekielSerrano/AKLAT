@@ -15,9 +15,11 @@ import javafx.event.ActionEvent;
 import javafx.geometry.*;
 import javafx.scene.*;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.image.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.*;
+import javafx.scene.shape.Circle;
 import javafx.scene.text.*;
 import javafx.stage.Stage;
 import javafx.util.Duration;
@@ -41,6 +43,19 @@ public class BookCatalogFX {
     private ComboBox<String> statusCombo;
     private TableView<Book> table;
     private Label countLabel;
+
+    // ── Kanban Board UI components ──────────────────────────────────
+    private HBox kanbanBoard;
+    private VBox colAvailableCards;
+    private VBox colBorrowedCards;
+    private VBox colAllOutCards;
+    private Label countAvailableBadge;
+    private Label countBorrowedBadge;
+    private Label countAllOutBadge;
+    private StackPane contentStack;
+    private Button kanbanToggleBtn;
+    private Button tableToggleBtn;
+    private boolean isKanbanView = true;
 
     // Feedback banner at top of the panel
     private HBox banner;
@@ -79,7 +94,7 @@ public class BookCatalogFX {
         searchField = new TextField();
         searchField.setPromptText("\uD83D\uDD0D  Search by title, author, barcode, ISBN\u2026");
         searchField.getStyleClass().add("input-field");
-        searchField.setPrefWidth(300);
+        searchField.setPrefWidth(280);
         searchField.textProperty().addListener((o, ov, nv) -> refresh());
 
         sectionCombo = FXComponents.styledCombo(new String[]{"All Sections"});
@@ -89,15 +104,30 @@ public class BookCatalogFX {
         statusCombo = FXComponents.styledCombo(new String[]{"All Status", "Available", "Borrowed", "All Out"});
         statusCombo.setOnAction(e -> refresh());
 
+        // View mode switcher: Kanban vs Table
+        HBox viewSwitch = new HBox(2);
+        viewSwitch.setAlignment(Pos.CENTER);
+        viewSwitch.setStyle("-fx-background-color: #E2E8F0; -fx-background-radius: 8; -fx-padding: 3;");
+
+        kanbanToggleBtn = new Button("📌 Kanban Board");
+        tableToggleBtn = new Button("📋 Table View");
+
+        styleViewToggle(kanbanToggleBtn, true);
+        styleViewToggle(tableToggleBtn, false);
+
+        kanbanToggleBtn.setOnAction(e -> setViewMode(true));
+        tableToggleBtn.setOnAction(e -> setViewMode(false));
+        viewSwitch.getChildren().addAll(kanbanToggleBtn, tableToggleBtn);
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button addBtn = FXComponents.primaryButton("+ Add Book");
         addBtn.setOnAction(e -> showAddBookDialog());
 
-        toolbar.getChildren().addAll(searchField, sectionCombo, statusCombo, spacer, addBtn);
+        toolbar.getChildren().addAll(searchField, sectionCombo, statusCombo, viewSwitch, spacer, addBtn);
 
-        // ── Table ──────────────────────────────────────────────────────
+        // ── Table View (Classic) ───────────────────────────────────────
         table = new TableView<>();
         table.getStyleClass().add("table-view");
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
@@ -139,9 +169,12 @@ public class BookCatalogFX {
                     int idx = getIndex();
                     if (idx >= 0 && idx < table.getItems().size()) {
                         Book b = table.getItems().get(idx);
-                        db.removeBook(idx);
-                        showBanner("Book \"" + b.getTitle() + "\" deleted.", "warn");
-                        refresh();
+                        int realIdx = db.getBooks().indexOf(b);
+                        if (realIdx >= 0) {
+                            db.removeBook(realIdx);
+                            showBanner("Book \"" + b.getTitle() + "\" deleted.", "warn");
+                            refresh();
+                        }
                     }
                 });
             }
@@ -153,7 +186,6 @@ public class BookCatalogFX {
 
         table.getColumns().addAll(barcodeCol, titleCol, authCol, secCol, availCol, statusCol, actionsCol);
 
-        // Animated row hover
         table.setRowFactory(tv -> {
             TableRow<Book> row = new TableRow<>();
             row.setOnMouseEntered(e -> {
@@ -163,16 +195,389 @@ public class BookCatalogFX {
             return row;
         });
 
+        // ── Kanban Board View ──────────────────────────────────────────
+        kanbanBoard = buildKanbanBoard();
+        VBox.setVgrow(kanbanBoard, Priority.ALWAYS);
+
+        // Content stack holding both views
+        contentStack = new StackPane(kanbanBoard, table);
+        VBox.setVgrow(contentStack, Priority.ALWAYS);
+
+        // Initial view mode: Kanban visible, Table hidden
+        setViewMode(true);
+
         countLabel = new Label();
         countLabel.setFont(Font.font("Segoe UI", 11));
         countLabel.setTextFill(Color.web(FXComponents.T_MUTED));
 
         refresh();
 
-        card.getChildren().addAll(banner, toolbar, table, countLabel);
+        card.getChildren().addAll(banner, toolbar, contentStack, countLabel);
         wrapper.getChildren().add(card);
         VBox.setVgrow(card, Priority.ALWAYS);
         return wrapper;
+    }
+
+    private void setViewMode(boolean kanban) {
+        this.isKanbanView = kanban;
+        styleViewToggle(kanbanToggleBtn, kanban);
+        styleViewToggle(tableToggleBtn, !kanban);
+        kanbanBoard.setVisible(kanban);
+        kanbanBoard.setManaged(kanban);
+        table.setVisible(!kanban);
+        table.setManaged(!kanban);
+    }
+
+    private void styleViewToggle(Button btn, boolean active) {
+        if (active) {
+            btn.setStyle(
+                "-fx-background-color: white;" +
+                "-fx-text-fill: #1E293B;" +
+                "-fx-font-weight: bold;" +
+                "-fx-font-size: 11px;" +
+                "-fx-background-radius: 6;" +
+                "-fx-padding: 5 12;" +
+                "-fx-cursor: hand;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 3, 0, 0, 1);"
+            );
+        } else {
+            btn.setStyle(
+                "-fx-background-color: transparent;" +
+                "-fx-text-fill: #64748B;" +
+                "-fx-font-weight: normal;" +
+                "-fx-font-size: 11px;" +
+                "-fx-background-radius: 6;" +
+                "-fx-padding: 5 12;" +
+                "-fx-cursor: hand;"
+            );
+        }
+    }
+
+    private HBox buildKanbanBoard() {
+        HBox board = new HBox(16);
+        board.setAlignment(Pos.TOP_CENTER);
+        VBox.setVgrow(board, Priority.ALWAYS);
+
+        colAvailableCards = new VBox(10);
+        colBorrowedCards  = new VBox(10);
+        colAllOutCards    = new VBox(10);
+
+        countAvailableBadge = new Label("0");
+        countBorrowedBadge  = new Label("0");
+        countAllOutBadge    = new Label("0");
+
+        // Column 1: Available (Green)
+        VBox col1 = buildKanbanColumn(
+            "Available Books",
+            "Ready to borrow from library shelves",
+            "#059669",
+            "#ECFDF5",
+            "#A7F3D0",
+            "#10B981",
+            countAvailableBadge,
+            colAvailableCards
+        );
+
+        // Column 2: Borrowed (Amber / Orange)
+        VBox col2 = buildKanbanColumn(
+            "Borrowed Books",
+            "Copies actively checked out by students",
+            "#D97706",
+            "#FFFBEB",
+            "#FDE68A",
+            "#F59E0B",
+            countBorrowedBadge,
+            colBorrowedCards
+        );
+
+        // Column 3: All Out (Red)
+        VBox col3 = buildKanbanColumn(
+            "All Out",
+            "0 copies left — all currently borrowed",
+            "#DC2626",
+            "#FEF2F2",
+            "#FECACA",
+            "#EF4444",
+            countAllOutBadge,
+            colAllOutCards
+        );
+
+        board.getChildren().addAll(col1, col2, col3);
+        return board;
+    }
+
+    private VBox buildKanbanColumn(String title, String subtitle, String colorHex, String bgHex,
+                                   String borderHex, String dotColor, Label badgeLabel, VBox cardsContainer) {
+        VBox col = new VBox(0);
+        col.setStyle(
+            "-fx-background-color: #F8FAFC;" +
+            "-fx-background-radius: 12;" +
+            "-fx-border-color: #E2E8F0;" +
+            "-fx-border-radius: 12;"
+        );
+        HBox.setHgrow(col, Priority.ALWAYS);
+        col.setMinWidth(250);
+        VBox.setVgrow(col, Priority.ALWAYS);
+
+        // Header
+        VBox header = new VBox(3);
+        header.setPadding(new Insets(12, 14, 12, 14));
+        header.setStyle(
+            "-fx-background-color: " + bgHex + ";" +
+            "-fx-background-radius: 11 11 0 0;" +
+            "-fx-border-color: " + borderHex + ";" +
+            "-fx-border-width: 0 0 1 0;"
+        );
+
+        HBox topRow = new HBox(8);
+        topRow.setAlignment(Pos.CENTER_LEFT);
+
+        Circle dot = new Circle(4.5, Color.web(dotColor));
+
+        Label titleLbl = new Label(title);
+        titleLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13.5));
+        titleLbl.setTextFill(Color.web(colorHex));
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        badgeLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+        badgeLabel.setTextFill(Color.web(colorHex));
+        badgeLabel.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-padding: 2 9;" +
+            "-fx-border-color: " + borderHex + ";" +
+            "-fx-border-radius: 10;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 2, 0, 0, 1);"
+        );
+
+        topRow.getChildren().addAll(dot, titleLbl, spacer, badgeLabel);
+
+        Label subLbl = new Label(subtitle);
+        subLbl.setFont(Font.font("Segoe UI", 10.5));
+        subLbl.setTextFill(Color.web("#64748B"));
+
+        header.getChildren().addAll(topRow, subLbl);
+
+        // Scrollable cards list
+        cardsContainer.setPadding(new Insets(12));
+        cardsContainer.setSpacing(10);
+        cardsContainer.setStyle("-fx-background-color: transparent;");
+
+        ScrollPane sp = new ScrollPane(cardsContainer);
+        sp.setFitToWidth(true);
+        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        sp.setStyle("-fx-background-color: transparent; -fx-background: transparent; -fx-border-color: transparent;");
+        VBox.setVgrow(sp, Priority.ALWAYS);
+
+        col.getChildren().addAll(header, sp);
+        return col;
+    }
+
+    private Node buildBookCard(Book b) {
+        VBox card = new VBox(8);
+        card.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-border-color: #E2E8F0;" +
+            "-fx-border-radius: 10;" +
+            "-fx-padding: 12 14;" +
+            "-fx-cursor: default;"
+        );
+        card.setEffect(new DropShadow(6, 0, 2, Color.rgb(0, 0, 0, 0.04)));
+
+        // Top Row: Section badge + Barcode
+        HBox topRow = new HBox(6);
+        topRow.setAlignment(Pos.CENTER_LEFT);
+
+        String sec = b.getSection() != null && !b.getSection().trim().isEmpty() ? b.getSection() : "General";
+        Label secTag = new Label(sec);
+        secTag.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 10));
+        secTag.setTextFill(Color.web("#3B82F6"));
+        secTag.setStyle("-fx-background-color: #EFF6FF; -fx-background-radius: 6; -fx-padding: 2 7;");
+
+        Region topSpacer = new Region();
+        HBox.setHgrow(topSpacer, Priority.ALWAYS);
+
+        Label barcodeLbl = new Label(b.getBarcode());
+        barcodeLbl.setFont(Font.font("Consolas", 10.5));
+        barcodeLbl.setTextFill(Color.web("#94A3B8"));
+
+        topRow.getChildren().addAll(secTag, topSpacer, barcodeLbl);
+
+        // Book Title
+        Label titleLbl = new Label(b.getTitle());
+        titleLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        titleLbl.setTextFill(Color.web("#1E293B"));
+        titleLbl.setWrapText(true);
+
+        // Author
+        Label authLbl = new Label("by " + (b.getAuthor() != null ? b.getAuthor() : "Unknown"));
+        authLbl.setFont(Font.font("Segoe UI", 11.5));
+        authLbl.setTextFill(Color.web("#64748B"));
+
+        // Copies Availability Indicator Bar
+        int avail = b.getAvailableCopies();
+        int total = b.getTotalCopies();
+        double ratio = total > 0 ? (double) avail / total : 0;
+
+        HBox copiesRow = new HBox(6);
+        copiesRow.setAlignment(Pos.CENTER_LEFT);
+
+        Label copiesLbl = new Label();
+        copiesLbl.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 10.5));
+
+        String barColor;
+        if (avail == 0) {
+            barColor = "#EF4444";
+            copiesLbl.setTextFill(Color.web("#EF4444"));
+            copiesLbl.setText("0 / " + total + " available (All Out)");
+        } else if (avail < total) {
+            barColor = "#F59E0B";
+            copiesLbl.setTextFill(Color.web("#D97706"));
+            copiesLbl.setText(avail + " / " + total + " avail (" + (total - avail) + " borrowed)");
+        } else {
+            barColor = "#10B981";
+            copiesLbl.setTextFill(Color.web("#059669"));
+            copiesLbl.setText(avail + " / " + total + " available");
+        }
+
+        ProgressBar pbar = new ProgressBar(ratio);
+        pbar.setPrefHeight(5);
+        pbar.setMinHeight(5);
+        pbar.setMaxHeight(5);
+        pbar.setPrefWidth(65);
+        pbar.setStyle("-fx-accent: " + barColor + ";");
+
+        Region copiesSpacer = new Region();
+        HBox.setHgrow(copiesSpacer, Priority.ALWAYS);
+
+        copiesRow.getChildren().addAll(pbar, copiesSpacer, copiesLbl);
+
+        // Footer Row: Call Number + Delete Action
+        HBox footer = new HBox(8);
+        footer.setAlignment(Pos.CENTER_LEFT);
+        footer.setStyle("-fx-padding: 4 0 0 0; -fx-border-color: #F1F5F9; -fx-border-width: 1 0 0 0;");
+
+        String callNum = b.getCallNumber() != null && !b.getCallNumber().trim().isEmpty() ? "📍 " + b.getCallNumber() : "";
+        Label callLbl = new Label(callNum);
+        callLbl.setFont(Font.font("Segoe UI", 10.5));
+        callLbl.setTextFill(Color.web("#94A3B8"));
+
+        Region footSpacer = new Region();
+        HBox.setHgrow(footSpacer, Priority.ALWAYS);
+
+        Button delBtn = new Button("🗑");
+        delBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-font-size: 11px; -fx-padding: 2 4; -fx-cursor: hand;");
+        delBtn.setOnMouseEntered(e -> delBtn.setStyle("-fx-background-color: #FEE2E2; -fx-text-fill: #EF4444; -fx-background-radius: 4; -fx-font-size: 11px; -fx-padding: 2 4; -fx-cursor: hand;"));
+        delBtn.setOnMouseExited(e -> delBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-font-size: 11px; -fx-padding: 2 4; -fx-cursor: hand;"));
+        delBtn.setOnAction(e -> {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete \"" + b.getTitle() + "\"?", ButtonType.YES, ButtonType.NO);
+            confirm.setTitle("Confirm Deletion");
+            confirm.setHeaderText(null);
+            confirm.showAndWait().ifPresent(res -> {
+                if (res == ButtonType.YES) {
+                    int realIdx = db.getBooks().indexOf(b);
+                    if (realIdx >= 0) {
+                        db.removeBook(realIdx);
+                        showBanner("Book \"" + b.getTitle() + "\" deleted.", "warn");
+                        refresh();
+                    }
+                }
+            });
+        });
+
+        footer.getChildren().addAll(callLbl, footSpacer, delBtn);
+
+        card.getChildren().addAll(topRow, titleLbl, authLbl, copiesRow, footer);
+
+        // Hover animations
+        card.setOnMouseEntered(e -> {
+            card.setStyle(
+                "-fx-background-color: #FFFFFF;" +
+                "-fx-background-radius: 10;" +
+                "-fx-border-color: #94A3B8;" +
+                "-fx-border-radius: 10;" +
+                "-fx-padding: 12 14;" +
+                "-fx-cursor: default;" +
+                "-fx-translate-y: -2;"
+            );
+            card.setEffect(new DropShadow(10, 0, 4, Color.rgb(0, 0, 0, 0.08)));
+        });
+        card.setOnMouseExited(e -> {
+            card.setStyle(
+                "-fx-background-color: white;" +
+                "-fx-background-radius: 10;" +
+                "-fx-border-color: #E2E8F0;" +
+                "-fx-border-radius: 10;" +
+                "-fx-padding: 12 14;" +
+                "-fx-cursor: default;" +
+                "-fx-translate-y: 0;"
+            );
+            card.setEffect(new DropShadow(6, 0, 2, Color.rgb(0, 0, 0, 0.04)));
+        });
+
+        return card;
+    }
+
+    private Node buildEmptyColPlaceholder(String msg) {
+        VBox emptyBox = new VBox(6);
+        emptyBox.setAlignment(Pos.CENTER);
+        emptyBox.setPadding(new Insets(32, 16, 32, 16));
+        emptyBox.setStyle(
+            "-fx-border-color: #E2E8F0;" +
+            "-fx-border-style: dashed;" +
+            "-fx-border-radius: 8;" +
+            "-fx-background-color: transparent;"
+        );
+
+        Label icon = new Label("✨");
+        icon.setFont(Font.font(16));
+
+        Label l = new Label(msg);
+        l.setFont(Font.font("Segoe UI", 12));
+        l.setTextFill(Color.web("#94A3B8"));
+
+        emptyBox.getChildren().addAll(icon, l);
+        return emptyBox;
+    }
+
+    private void populateKanban(List<Book> books) {
+        colAvailableCards.getChildren().clear();
+        colBorrowedCards.getChildren().clear();
+        colAllOutCards.getChildren().clear();
+
+        int cAvail = 0;
+        int cBorrowed = 0;
+        int cAllOut = 0;
+
+        for (Book b : books) {
+            Book.Status st = b.getStatus();
+            Node card = buildBookCard(b);
+            switch (st) {
+                case AVAILABLE -> {
+                    colAvailableCards.getChildren().add(card);
+                    cAvail++;
+                }
+                case BORROWED -> {
+                    colBorrowedCards.getChildren().add(card);
+                    cBorrowed++;
+                }
+                case ALL_OUT -> {
+                    colAllOutCards.getChildren().add(card);
+                    cAllOut++;
+                }
+            }
+        }
+
+        countAvailableBadge.setText(String.valueOf(cAvail));
+        countBorrowedBadge.setText(String.valueOf(cBorrowed));
+        countAllOutBadge.setText(String.valueOf(cAllOut));
+
+        if (cAvail == 0) colAvailableCards.getChildren().add(buildEmptyColPlaceholder("No available books"));
+        if (cBorrowed == 0) colBorrowedCards.getChildren().add(buildEmptyColPlaceholder("No borrowed books"));
+        if (cAllOut == 0) colAllOutCards.getChildren().add(buildEmptyColPlaceholder("No books are all out"));
     }
 
     private void updateSectionCombo() {
@@ -199,8 +604,14 @@ public class BookCatalogFX {
         String sec = sectionCombo == null ? "All Sections" : sectionCombo.getValue();
         String st  = statusCombo  == null ? "All Status"   : statusCombo.getValue();
         List<Book> books = db.searchBooks(q, sec, st);
-        table.getItems().setAll(books);
-        countLabel.setText("Showing " + books.size() + " book(s)");
+        if (table != null) table.getItems().setAll(books);
+        populateKanban(books);
+        if (countLabel != null) {
+            countLabel.setText("Showing " + books.size() + " book(s) • "
+                + countAvailableBadge.getText() + " Available • "
+                + countBorrowedBadge.getText() + " Borrowed • "
+                + countAllOutBadge.getText() + " All Out");
+        }
     }
 
     private void showBanner(String msg, String type) {
