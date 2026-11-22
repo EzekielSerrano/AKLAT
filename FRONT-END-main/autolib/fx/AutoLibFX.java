@@ -28,16 +28,33 @@ public class AutoLibFX extends Application {
         System.setProperty("prism.lcdtext", "true");
         System.setProperty("prism.text", "t2k");
 
-        PortalScreenFX portal = new PortalScreenFX(primaryStage);
-        Scene scene = portal.buildScene();
-        primaryStage.setTitle("A.K.L.A.T. — Automated Key Library Analytics & Tracking");
-        primaryStage.setScene(scene);
-        primaryStage.setWidth(1024);
-        primaryStage.setHeight(620);
-        primaryStage.setMinWidth(820);
-        primaryStage.setMinHeight(540);
-        primaryStage.centerOnScreen();
-        primaryStage.show();
+        boolean kioskOnly = "true".equalsIgnoreCase(System.getProperty("autolib.kiosk"));
+
+        if (kioskOnly) {
+            // ── Student Kiosk mode: skip the portal, go straight to kiosk ──
+            primaryStage.setTitle("A.K.L.A.T. — Student Kiosk");
+            StudentKioskFX kiosk = new StudentKioskFX(primaryStage);
+            Scene scene = kiosk.buildScene();
+            primaryStage.setScene(scene);
+            primaryStage.setWidth(1120);
+            primaryStage.setHeight(700);
+            primaryStage.setMinWidth(900);
+            primaryStage.setMinHeight(600);
+            primaryStage.centerOnScreen();
+            primaryStage.show();
+        } else {
+            // ── Normal mode: show the portal selection screen ──
+            PortalScreenFX portal = new PortalScreenFX(primaryStage);
+            Scene scene = portal.buildScene();
+            primaryStage.setTitle("A.K.L.A.T. — Automated Key Library Analytics & Tracking");
+            primaryStage.setScene(scene);
+            primaryStage.setWidth(1024);
+            primaryStage.setHeight(620);
+            primaryStage.setMinWidth(820);
+            primaryStage.setMinHeight(540);
+            primaryStage.centerOnScreen();
+            primaryStage.show();
+        }
     }
 
     public static void main(String[] args) {
