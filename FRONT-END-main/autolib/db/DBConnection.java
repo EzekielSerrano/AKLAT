@@ -15,33 +15,9 @@ public class DBConnection {
     private static final String DEFAULT_USER = "postgres";
     private static final String DEFAULT_PASS = "postgres";
 
-    // Try localhost first (when running on the server PC itself),
-    // then fall back to the LAN IP (for client PCs on the network).
-    private static String url = resolveUrl();
-    private static String user = DEFAULT_USER;
-    private static String password = DEFAULT_PASS;
-
-    /**
-     * Tries localhost first; if that fails, uses the LAN IP.
-     * This makes the app work both on the server PC and on remote PCs.
-     */
-    private static String resolveUrl() {
-        // Attempt localhost first
-        String localUrl = String.format("jdbc:postgresql://localhost:%s/%s", DEFAULT_PORT, DEFAULT_DB);
-        try {
-            Class.forName("org.postgresql.Driver");
-            java.sql.Connection c = java.sql.DriverManager.getConnection(localUrl, DEFAULT_USER, DEFAULT_PASS);
-            if (c != null && !c.isClosed()) {
-                c.close();
-                System.out.println("[AutoLib DB] Using localhost connection.");
-                return localUrl;
-            }
-        } catch (Exception ignored) {
-            // localhost not available, try LAN IP
-        }
-        System.out.println("[AutoLib DB] Localhost unavailable, using LAN IP: " + DEFAULT_HOST);
-        return String.format("jdbc:postgresql://%s:%s/%s", DEFAULT_HOST, DEFAULT_PORT, DEFAULT_DB);
-    }
+    private static String url;
+    private static String user;
+    private static String password;
 
     static {
         try {
@@ -50,6 +26,46 @@ public class DBConnection {
             System.err.println("[AutoLib DB] PostgreSQL JDBC Driver not found on classpath.");
             System.err.println("[AutoLib DB] Please add postgresql-42.x.x.jar to your classpath/lib folder.");
         }
+        resolveConnectionParams();
+    }
+
+    /**
+     * Resolves the PostgreSQL connection URL and credentials.
+     * Checks environment variables first (e.g. for cloud/Neon DB),
+     * otherwise falls back to localhost, and finally LAN IP.
+     */
+    private static void resolveConnectionParams() {
+        String envHost = System.getenv("AUTOLIB_DB_HOST");
+        if (envHost != null && !envHost.trim().isEmpty()) {
+            String port = System.getenv("AUTOLIB_DB_PORT") != null ? System.getenv("AUTOLIB_DB_PORT") : "5432";
+            String db = System.getenv("AUTOLIB_DB_NAME") != null ? System.getenv("AUTOLIB_DB_NAME") : "neondb";
+            user = System.getenv("AUTOLIB_DB_USER") != null ? System.getenv("AUTOLIB_DB_USER") : "neondb_owner";
+            password = System.getenv("AUTOLIB_DB_PASS") != null ? System.getenv("AUTOLIB_DB_PASS") : "";
+            boolean ssl = "true".equalsIgnoreCase(System.getenv("AUTOLIB_DB_SSL"));
+            String sslParam = ssl ? "?ssl=true&sslmode=require" : "";
+            System.out.println("[AutoLib DB] Connecting via env config to cloud host: " + envHost);
+            url = String.format("jdbc:postgresql://%s:%s/%s%s", envHost.trim(), port.trim(), db.trim(), sslParam);
+            return;
+        }
+
+        user = DEFAULT_USER;
+        password = DEFAULT_PASS;
+
+        // Attempt localhost first
+        String localUrl = String.format("jdbc:postgresql://localhost:%s/%s", DEFAULT_PORT, DEFAULT_DB);
+        try {
+            java.sql.Connection c = java.sql.DriverManager.getConnection(localUrl, DEFAULT_USER, DEFAULT_PASS);
+            if (c != null && !c.isClosed()) {
+                c.close();
+                System.out.println("[AutoLib DB] Using localhost connection.");
+                url = localUrl;
+                return;
+            }
+        } catch (Exception ignored) {
+            // localhost not available, try LAN IP
+        }
+        System.out.println("[AutoLib DB] Localhost unavailable, using LAN IP: " + DEFAULT_HOST);
+        url = String.format("jdbc:postgresql://%s:%s/%s", DEFAULT_HOST, DEFAULT_PORT, DEFAULT_DB);
     }
 
     private DBConnection() {}

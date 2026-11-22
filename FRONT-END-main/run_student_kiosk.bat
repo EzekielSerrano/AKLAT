@@ -5,6 +5,14 @@ REM  Launches directly to the Student panel.
 REM  No librarian login prompt. No staff access.
 REM =========================================================
 
+REM Neon Database Configuration (Cloud Sync)
+SET AUTOLIB_DB_HOST=ep-empty-resonance-bdo2ioxe.c-8.us-east-2.aws.neon.tech
+SET AUTOLIB_DB_PORT=5432
+SET AUTOLIB_DB_NAME=neondb
+SET AUTOLIB_DB_USER=neondb_owner
+SET AUTOLIB_DB_PASS=npg_b3fNhMP1euQy
+SET AUTOLIB_DB_SSL=true
+
 REM Use %~dp0 so this bat works from any folder (portable)
 SET PROJ=%~dp0
 IF "%PROJ:~-1%"=="\" SET PROJ=%PROJ:~0,-1%
