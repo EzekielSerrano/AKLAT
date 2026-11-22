@@ -787,14 +787,20 @@ public class PortalScreenFX {
         LoginDialogFX dialog = new LoginDialogFX(stage);
         dialog.show(authenticated -> {
             if (authenticated) {
-                LibrarianPortalFX lp = new LibrarianPortalFX(stage);
-                stage.setTitle("A.K.L.A.T. — Librarian Portal");
-                Scene next = lp.buildScene();
-                stage.setScene(next);
-                stage.setWidth(1120);
-                stage.setHeight(700);
-                stage.centerOnScreen();
-                FXComponents.fadeInSlide(next.getRoot());
+                try {
+                    LibrarianPortalFX lp = new LibrarianPortalFX(stage);
+                    Scene next = lp.buildScene();
+                    stage.setTitle("A.K.L.A.T. — Librarian Portal");
+                    stage.setScene(next);
+                    stage.setWidth(1120);
+                    stage.setHeight(700);
+                    stage.centerOnScreen();
+                    FXComponents.fadeInSlide(next.getRoot());
+                } catch (Throwable t) {
+                    System.err.println("[PortalScreenFX] Error opening Librarian Portal: " + t.getMessage());
+                    t.printStackTrace();
+                    clockTimeline.play();
+                }
             } else {
                 clockTimeline.play();
             }

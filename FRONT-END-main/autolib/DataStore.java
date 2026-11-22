@@ -772,12 +772,31 @@ public class DataStore {
         Timestamp ts = rs.getTimestamp("transaction_time");
         LocalDateTime ldt = ts != null ? ts.toLocalDateTime() : LocalDateTime.now();
         String typeStr = rs.getString("type");
-        Transaction.Type type = Transaction.Type.valueOf(typeStr);
+        Transaction.Type type = Transaction.Type.BORROWED;
+        if (typeStr != null) {
+            try {
+                type = Transaction.Type.valueOf(typeStr.trim().toUpperCase());
+            } catch (Exception ignored) {
+                if (typeStr.toUpperCase().contains("RET")) type = Transaction.Type.RETURNED;
+                else if (typeStr.toUpperCase().contains("OVER")) type = Transaction.Type.OVERDUE;
+                else type = Transaction.Type.BORROWED;
+            }
+        }
+        String sName = rs.getString("student_name");
+        String sId = rs.getString("student_id");
+        if (sName == null || sName.trim().isEmpty()) {
+            sName = (sId != null && !sId.trim().isEmpty()) ? "Student " + sId : "Unknown Student";
+        }
+        String bTitle = rs.getString("book_title");
+        String bBarcode = rs.getString("book_barcode");
+        if (bTitle == null || bTitle.trim().isEmpty()) {
+            bTitle = (bBarcode != null && !bBarcode.trim().isEmpty()) ? "Book " + bBarcode : "Untitled Book";
+        }
         return new Transaction(
-            rs.getString("student_name"),
-            rs.getString("student_id"),
-            rs.getString("book_title"),
-            rs.getString("book_barcode"),
+            sName,
+            sId != null ? sId : "",
+            bTitle,
+            bBarcode != null ? bBarcode : "",
             type,
             ldt,
             rs.getInt("days_overdue")

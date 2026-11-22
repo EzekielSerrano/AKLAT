@@ -139,9 +139,19 @@ public class DashboardFX {
         String[] colors = {FXComponents.BLUE, FXComponents.GREEN, FXComponents.ORANGE, "#A855F7", "#14B8A6"};
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("h:mm a");
         int ci = 0;
-        for (Transaction tx : db.getTransactions()) {
+        List<Transaction> allTx = db.getTransactions();
+        int maxItems = Math.min(5, allTx.size());
+        for (int i = 0; i < maxItems; i++) {
+            Transaction tx = allTx.get(i);
             list.getChildren().add(txRow(tx, colors[ci % colors.length], fmt));
             ci++;
+        }
+        if (allTx.isEmpty()) {
+            Label emptyLbl = new Label("No recent transactions");
+            emptyLbl.setFont(Font.font("Segoe UI", 12));
+            emptyLbl.setTextFill(Color.web(FXComponents.T_MUTED));
+            emptyLbl.setPadding(new Insets(8, 0, 0, 0));
+            list.getChildren().add(emptyLbl);
         }
 
         card.getChildren().addAll(hdr, list);
@@ -165,27 +175,34 @@ public class DashboardFX {
             tt.setToX(0); tt.play();
         });
 
-        String init = tx.getStudentName().substring(0, 1).toUpperCase();
+        String init = tx.getStudentInitial();
         StackPane av = FXComponents.avatar(init, avatarColor, 30);
 
         VBox mid = new VBox(1);
         HBox.setHgrow(mid, Priority.ALWAYS);
-        Label nameL = new Label(tx.getStudentName());
+        String sName = (tx.getStudentName() != null && !tx.getStudentName().trim().isEmpty())
+            ? tx.getStudentName() : "Unknown Student";
+        Label nameL = new Label(sName);
         nameL.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         nameL.setTextFill(Color.web(FXComponents.T_PRIMARY));
-        Label bookL = new Label(tx.getBookTitle());
+        String bTitle = (tx.getBookTitle() != null && !tx.getBookTitle().trim().isEmpty())
+            ? tx.getBookTitle() : "Unknown Title";
+        Label bookL = new Label(bTitle);
         bookL.setFont(Font.font("Segoe UI", 10));
         bookL.setTextFill(Color.web(FXComponents.T_MUTED));
         mid.getChildren().addAll(nameL, bookL);
 
         VBox right = new VBox(2);
         right.setAlignment(Pos.CENTER_RIGHT);
-        String timeStr = tx.getTimestamp().toLocalDate().equals(java.time.LocalDate.now())
-            ? tx.getTimestamp().format(fmt) : "Yesterday";
+        String timeStr = "Recent";
+        if (tx.getTimestamp() != null) {
+            timeStr = tx.getTimestamp().toLocalDate().equals(java.time.LocalDate.now())
+                ? tx.getTimestamp().format(fmt) : "Yesterday";
+        }
         Label timeL = new Label(timeStr);
         timeL.setFont(Font.font("Segoe UI", 10));
         timeL.setTextFill(Color.web(FXComponents.T_MUTED));
-        right.getChildren().addAll(timeL, FXComponents.txBadge(tx.getTypeText()));
+        right.getChildren().addAll(timeL, FXComponents.txBadge(tx.getTypeText() != null ? tx.getTypeText() : "Borrowed"));
 
         row.getChildren().addAll(av, mid, right);
         return row;
@@ -288,10 +305,10 @@ public class DashboardFX {
 
         VBox txt = new VBox(1);
         HBox.setHgrow(txt, Priority.ALWAYS);
-        Label sL = new Label(student);
+        Label sL = new Label(student != null && !student.trim().isEmpty() ? student : "Unknown Student");
         sL.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         sL.setTextFill(Color.web(FXComponents.T_PRIMARY));
-        Label bL = new Label(book);
+        Label bL = new Label(book != null && !book.trim().isEmpty() ? book : "Untitled Book");
         bL.setFont(Font.font("Segoe UI", 10));
         bL.setTextFill(Color.web(FXComponents.T_MUTED));
         txt.getChildren().addAll(sL, bL);
