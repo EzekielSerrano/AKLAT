@@ -1,14 +1,28 @@
 @echo off
-SET PROJ=c:\Users\JENNIFER CANTUJA\Downloads\FRONT-END-main\FRONT-END-main
+REM Use %~dp0 so this bat works from any folder (portable)
+SET PROJ=%~dp0
+IF "%PROJ:~-1%"=="\" SET PROJ=%PROJ:~0,-1%
+
 SET JAVAFX=%PROJ%\lib\javafx-sdk-17\lib
 SET PGJDBC=%PROJ%\lib\postgresql-42.7.4.jar
 SET CAMLIBS=%PROJ%\lib\zxing-core-3.5.3.jar;%PROJ%\lib\zxing-javase-3.5.3.jar;%PROJ%\lib\webcam-capture-0.3.12.jar;%PROJ%\lib\bridj-0.7.0.jar;%PROJ%\lib\slf4j-api-1.7.36.jar;%PROJ%\lib\slf4j-simple-1.7.36.jar
+
+REM Auto-detect JDK 17 from common install locations
 SET JDK=C:\Program Files\Java\jdk-17\bin
+IF NOT EXIST "%JDK%\javac.exe" SET JDK=C:\Program Files\Eclipse Adoptium\jdk-17.0.9.9-hotspot\bin
+IF NOT EXIST "%JDK%\javac.exe" SET JDK=C:\Program Files\Microsoft\jdk-17.0.9.8-hotspot\bin
+IF NOT EXIST "%JDK%\javac.exe" SET JDK=C:\Program Files\Java\jdk-17.0.9\bin
+IF NOT EXIST "%JDK%\javac.exe" (
+  echo [ERROR] JDK 17 not found. Please install JDK 17 from https://adoptium.net/
+  pause
+  exit /b 1
+)
+
 SET OUT=%PROJ%\out
 
 echo =========================================
 echo  A.K.L.A.T. FX - Build and Run
-echo  Automated Key Library Analytics & Tracking
+echo  Automated Key Library Analytics ^& Tracking
 echo =========================================
 
 cd /d "%PROJ%"
