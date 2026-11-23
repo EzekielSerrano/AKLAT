@@ -191,6 +191,7 @@ public final class FXComponents {
         if (scene == null) return;
         java.io.File[] candidates = {
             new java.io.File("resources/autolib.css"),
+            new java.io.File("AKLAT/resources/autolib.css"),
             new java.io.File("FRONT-END-main/resources/autolib.css")
         };
         for (java.io.File f : candidates) {

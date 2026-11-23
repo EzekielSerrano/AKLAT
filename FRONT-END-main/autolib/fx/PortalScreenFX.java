@@ -220,6 +220,7 @@ public class PortalScreenFX {
         String[] filePaths = {
             LOGO_FILE,
             "autolib/fx/" + LOGO_FILE,
+            "AKLAT/autolib/fx/" + LOGO_FILE,
             "FRONT-END-main/autolib/fx/" + LOGO_FILE,
             "images/" + LOGO_FILE,
             "assets/" + LOGO_FILE,
