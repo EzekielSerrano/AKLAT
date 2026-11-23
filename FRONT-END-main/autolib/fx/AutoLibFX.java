@@ -28,6 +28,9 @@ public class AutoLibFX extends Application {
         System.setProperty("prism.lcdtext", "true");
         System.setProperty("prism.text", "t2k");
 
+        // Pre-connect to PostgreSQL and warm up in-memory caches in background immediately
+        autolib.DataStore.warmUpAsync();
+
         boolean kioskOnly = "true".equalsIgnoreCase(System.getProperty("autolib.kiosk"));
 
         if (kioskOnly) {

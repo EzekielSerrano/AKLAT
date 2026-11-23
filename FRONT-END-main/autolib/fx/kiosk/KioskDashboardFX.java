@@ -36,10 +36,40 @@ public class KioskDashboardFX {
         content.setPadding(new Insets(20));
         content.setStyle("-fx-background-color:#F4F6FA;");
 
-        // Stat row
+        // 1. Fetch transactions for this student once (uses in-memory cache)
+        List<Transaction> allTx = db.getTransactions();
+        List<Transaction> myTx = new java.util.ArrayList<>();
+        for (Transaction tx : allTx) {
+            if (tx.getStudentId().equals(student.getStudentId())) myTx.add(tx);
+        }
+
+        // Transactions come newest-first from the DB.
+        // The newest transaction per barcode determines whether the book is currently held.
+        java.util.Map<String, Transaction> latestByBarcode = new java.util.LinkedHashMap<>();
+        for (Transaction tx : myTx) {
+            String bc = tx.getBookBarcode();
+            if (bc != null && !latestByBarcode.containsKey(bc)) {
+                latestByBarcode.put(bc, tx);
+            }
+        }
+
+        List<Transaction> borrowedTx = new java.util.ArrayList<>();
+        int overdueCount = 0;
+        for (Transaction tx : latestByBarcode.values()) {
+            if (tx.getType() == Transaction.Type.BORROWED || tx.getType() == Transaction.Type.OVERDUE) {
+                borrowedTx.add(tx);
+                if (tx.getType() == Transaction.Type.OVERDUE) overdueCount++;
+            }
+        }
+
+        // Keep student stats synchronized immediately (matches database & librarian portal)
+        student.setActiveLoans(borrowedTx.size());
+        student.setOverdueCount(overdueCount);
+
+        // 2. Stat row
         HBox statsRow = new HBox(12);
         statsRow.setMaxWidth(Double.MAX_VALUE);
-        int remaining = 5 - student.getActiveLoans();
+        int remaining = Math.max(0, 5 - student.getActiveLoans());
         VBox c1 = FXComponents.statCard("📚", student.getActiveLoans(), "Active Loans",
             student.getActiveLoans() > 0 ? "Books in your possession" : "No active loans", FXComponents.BLUE);
         VBox c2 = FXComponents.statCard("⏰", student.getOverdueCount(), "Overdue",
@@ -53,16 +83,16 @@ public class KioskDashboardFX {
 
         for (VBox c : new VBox[]{c1, c2, c3, c4}) { HBox.setHgrow(c, Priority.ALWAYS); statsRow.getChildren().add(c); }
 
-        // Mid row
+        // 3. Mid row
         HBox midRow = new HBox(12);
         midRow.setMaxWidth(Double.MAX_VALUE);
-        Node borrowedCard = buildBorrowedCard();
-        Node activityCard = buildActivityCard();
+        Node borrowedCard = buildBorrowedCard(borrowedTx);
+        Node activityCard = buildActivityCard(myTx);
         HBox.setHgrow(borrowedCard, Priority.ALWAYS);
         HBox.setHgrow(activityCard, Priority.ALWAYS);
         midRow.getChildren().addAll(borrowedCard, activityCard);
 
-        // Quick actions
+        // 4. Quick actions
         VBox qCard = new VBox(10);
         qCard.getStyleClass().add("card");
         qCard.setPadding(new Insets(16, 18, 16, 18));
@@ -72,9 +102,11 @@ public class KioskDashboardFX {
         HBox btns = new HBox(10);
         Button histBtn    = FXComponents.primaryButton("  View History");
         Button profileBtn = FXComponents.ghostButton("  My Profile");
+        Button refreshBtn = FXComponents.ghostButton("↻  Refresh Data");
         histBtn.setOnAction(e    -> kiosk.navigateTo("My History"));
         profileBtn.setOnAction(e -> kiosk.navigateTo("My Profile"));
-        btns.getChildren().addAll(histBtn, profileBtn);
+        refreshBtn.setOnAction(e -> kiosk.triggerRefresh());
+        btns.getChildren().addAll(histBtn, profileBtn, refreshBtn);
 
         Label deskNote = new Label("To borrow or return a book, please proceed to the librarian's desk "
             + "and present your student ID together with the book.");
@@ -89,7 +121,7 @@ public class KioskDashboardFX {
         return sp;
     }
 
-    private Node buildBorrowedCard() {
+    private Node buildBorrowedCard(List<Transaction> borrowedTx) {
         VBox card = new VBox(10);
         card.getStyleClass().add("card");
         card.setPadding(new Insets(16, 18, 12, 18));
@@ -98,20 +130,16 @@ public class KioskDashboardFX {
         VBox list = new VBox(4);
         list.setPadding(new Insets(10, 0, 0, 0));
 
-        boolean found = false;
-        for (Transaction tx : db.getTransactions()) {
-            if (tx.getStudentId().equals(student.getStudentId())
-                    && (tx.getType() == Transaction.Type.BORROWED || tx.getType() == Transaction.Type.OVERDUE)) {
-                list.getChildren().add(borrowedRow(tx));
-                found = true;
-            }
-        }
-        if (!found) {
+        if (borrowedTx.isEmpty()) {
             Label empty = new Label("No books currently borrowed.");
             empty.setFont(Font.font("Segoe UI", 13));
             empty.setTextFill(Color.web(FXComponents.T_MUTED));
             empty.setPadding(new Insets(20, 0, 20, 0));
             list.getChildren().add(empty);
+        } else {
+            for (Transaction tx : borrowedTx) {
+                list.getChildren().add(borrowedRow(tx));
+            }
         }
         card.getChildren().addAll(hdr, list);
         return card;
@@ -139,7 +167,7 @@ public class KioskDashboardFX {
         return row;
     }
 
-    private Node buildActivityCard() {
+    private Node buildActivityCard(List<Transaction> myTx) {
         VBox card = new VBox(10);
         card.getStyleClass().add("card");
         card.setPadding(new Insets(16, 18, 12, 18));
@@ -149,9 +177,16 @@ public class KioskDashboardFX {
         list.setPadding(new Insets(10, 0, 0, 0));
 
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MMM d, h:mm a");
-        boolean found = false;
-        for (Transaction tx : db.getTransactions()) {
-            if (tx.getStudentId().equals(student.getStudentId())) {
+        if (myTx == null || myTx.isEmpty()) {
+            Label empty = new Label("No recent activity.");
+            empty.setFont(Font.font("Segoe UI", 13));
+            empty.setTextFill(Color.web(FXComponents.T_MUTED));
+            list.getChildren().add(empty);
+        } else {
+            // Show up to 5 most recent activities
+            int count = 0;
+            for (Transaction tx : myTx) {
+                if (count++ >= 5) break;
                 HBox row = new HBox(0);
                 row.setAlignment(Pos.CENTER_LEFT);
                 row.setPadding(new Insets(6, 0, 6, 0));
@@ -169,14 +204,7 @@ public class KioskDashboardFX {
                 left.getChildren().addAll(bookL, timeL);
                 row.getChildren().addAll(left, FXComponents.txBadge(tx.getTypeText()));
                 list.getChildren().add(row);
-                found = true;
             }
-        }
-        if (!found) {
-            Label empty = new Label("No recent activity.");
-            empty.setFont(Font.font("Segoe UI", 13));
-            empty.setTextFill(Color.web(FXComponents.T_MUTED));
-            list.getChildren().add(empty);
         }
         card.getChildren().addAll(hdr, list);
         return card;

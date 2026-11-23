@@ -42,14 +42,23 @@ public class StudentKioskFX {
     private static final long SCANNER_INTERVAL_MS = 60;
 
     // Dashboard state
+    private StackPane stackRoot;
     private StackPane contentArea;
+    private StackPane contentPane;
+    private StackPane loaderOverlay;
+    private Label loaderMessageLabel;
     private Label pageTitleLabel;
     private Button activeNavBtn;
+    private Button refreshBtn;
+    private String currentPanelName = "Dashboard";
 
     // Lazy panels (view-only: borrowing & returning is handled at the librarian's desk)
     private Node dashNode, histNode, profileNode;
 
-    public StudentKioskFX(Stage stage) { this.stage = stage; }
+    public StudentKioskFX(Stage stage) {
+        this.stage = stage;
+        DataStore.warmUpAsync();
+    }
 
     public Scene buildScene() {
         StackPane root = new StackPane(buildBackground(), buildWelcomeContent());
@@ -172,11 +181,21 @@ public class StudentKioskFX {
         bar.setPadding(new Insets(10, 20, 0, 20));
         bar.setAlignment(Pos.CENTER);
 
-        Button backBtn = new Button("‹ Back to Portal");
-        backBtn.setStyle("-fx-background-color:transparent; -fx-text-fill:#8C96AA; -fx-font-size:11; -fx-cursor:hand;");
-        FXComponents.addPopHover(backBtn, 1.05);
-        backBtn.setOnAction(e -> goToPortal());
-        HBox.setHgrow(backBtn, Priority.NEVER);
+        boolean isKioskMode = "true".equalsIgnoreCase(System.getProperty("autolib.kiosk"));
+        if (!isKioskMode) {
+            Button backBtn = new Button("‹ Back to Portal");
+            backBtn.setStyle("-fx-background-color:transparent; -fx-text-fill:#8C96AA; -fx-font-size:11; -fx-cursor:hand;");
+            FXComponents.addPopHover(backBtn, 1.05);
+            backBtn.setOnAction(e -> {
+                if (clockTimeline != null) clockTimeline.stop();
+                stage.setTitle("A.K.L.A.T. — Portal Selection");
+                stage.setScene(new PortalScreenFX(stage).buildScene());
+                stage.setWidth(1024);
+                stage.setHeight(620);
+                stage.centerOnScreen();
+            });
+            bar.getChildren().add(backBtn);
+        }
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -188,7 +207,7 @@ public class StudentKioskFX {
         clockTimeline.setCycleCount(Animation.INDEFINITE);
         clockTimeline.play();
 
-        bar.getChildren().addAll(backBtn, spacer, clockLabel);
+        bar.getChildren().addAll(spacer, clockLabel);
         return bar;
     }
 
@@ -213,9 +232,12 @@ public class StudentKioskFX {
         logoText.getChildren().addAll(appName, kiosk);
         logoRow.getChildren().addAll(logoIcon, logoText);
 
-        // NFC pulse animation
+        // NFC pulse animation (centered in card)
         nfcIcon = FXComponents.nfcPulse(110);
-        nfcIcon.setPadding(new Insets(16, 0, 10, 0));
+        StackPane nfcWrap = new StackPane(nfcIcon);
+        nfcWrap.setAlignment(Pos.CENTER);
+        nfcWrap.setMaxWidth(Double.MAX_VALUE);
+        nfcWrap.setPadding(new Insets(14, 0, 8, 0));
 
         Label tapTitle = new Label("Tap Your Student ID");
         tapTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
@@ -235,28 +257,18 @@ public class StudentKioskFX {
         idField.setPrefHeight(40);
         HBox.setHgrow(idField, Priority.ALWAYS);
 
-        // Safety listener: hide raw NFC UID immediately if it bypasses the event filter
+        // Safety listener: auto-detect NFC card if typed directly by card reader hardware
         idField.textProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal == null || newVal.trim().isEmpty()) return;
             String clean = newVal.trim();
 
-            // Safety net 1: Check if input matches any registered student's NFC UID
-            Student byNfc = DataStore.get().findStudentByNfc(clean);
-            if (byNfc != null) {
-                Platform.runLater(() -> {
-                    idField.clear();
-                    showSuccessAndLogin(byNfc);
-                });
-                return;
-            }
-
-            // Safety net 2: Check if input is a raw numeric NFC UID pattern (8-14 digits, no hyphen)
-            if (clean.length() >= 8 && clean.matches("\\d{8,14}")) {
-                Student byId = DataStore.get().findStudentByIdOrNfc(clean);
-                if (byId == null) {
+            // Only check in-memory cache if input length matches an NFC UID pattern (>= 7 chars)
+            if (clean.length() >= 7) {
+                Student byNfc = DataStore.get().findStudentByNfcInMemory(clean);
+                if (byNfc != null) {
                     Platform.runLater(() -> {
                         idField.clear();
-                        showError("Card not recognized. Please sign in with your SR-Code.");
+                        showSuccessAndLogin(byNfc);
                     });
                 }
             }
@@ -289,7 +301,12 @@ public class StudentKioskFX {
                 showError("Please enter your student ID / SR-Code.");
                 return;
             }
-            Student found = DataStore.get().findStudentByIdOrNfc(id);
+            // Fast in-memory check first (instant, 0ms)
+            Student found = DataStore.get().findStudentByIdOrNfcInMemory(id);
+            if (found == null) {
+                // If not in cache, fallback to live database
+                found = DataStore.get().findStudentByIdOrNfc(id);
+            }
             if (found == null) {
                 if (id.matches("\\d{8,}")) {
                     idField.clear();
@@ -311,12 +328,12 @@ public class StudentKioskFX {
         goBtn.setOnAction(e -> doLogin.run());
         idField.setOnAction(e -> doLogin.run());
 
-        card.getChildren().addAll(logoRow, nfcIcon, tapTitle, tapSub, inputRow, errorLabel);
+        card.getChildren().addAll(logoRow, nfcWrap, tapTitle, tapSub, inputRow, errorLabel);
 
         StackPane wrap = new StackPane(card);
         StackPane.setAlignment(card, Pos.CENTER);
         FXComponents.fadeInSlide(card);
-        FXComponents.staggerIn(logoRow, nfcIcon, tapTitle, tapSub, inputRow);
+        FXComponents.staggerIn(logoRow, nfcWrap, tapTitle, tapSub, inputRow);
         return wrap;
     }
 
@@ -336,6 +353,7 @@ public class StudentKioskFX {
     private void loginStudent(Student s) {
         this.currentStudent = s;
         this.dashNode = this.histNode = this.profileNode = null;
+        DataStore.get().invalidateTransactions();
 
         HBox root = new HBox(0);
         root.setStyle("-fx-background-color:#F4F6FA;");
@@ -345,8 +363,8 @@ public class StudentKioskFX {
         HBox.setHgrow(mainArea, Priority.ALWAYS);
         root.getChildren().addAll(sidebar, mainArea);
 
-        StackPane stackRoot = new StackPane(root);
-        Scene scene = new Scene(stackRoot);
+        this.stackRoot = new StackPane(root);
+        Scene scene = new Scene(this.stackRoot);
         FXComponents.applyStylesheet(scene);
         stage.setScene(scene);
         FXComponents.slideIn(sidebar, 220);
@@ -427,12 +445,7 @@ public class StudentKioskFX {
         Button logout = new Button("→");
         logout.setStyle("-fx-background-color:transparent; -fx-text-fill:#64708C; -fx-font-size:16; -fx-cursor:hand;");
         FXComponents.addPopHover(logout, 1.2);
-        logout.setOnAction(e -> {
-            if (clockTimeline != null) clockTimeline.stop();
-            stage.setTitle("A.K.L.A.T. — Student Kiosk");
-            StudentKioskFX fresh = new StudentKioskFX(stage);
-            stage.setScene(fresh.buildScene());
-        });
+        logout.setOnAction(e -> doLogout());
 
         row.getChildren().addAll(av, info, logout);
         return row;
@@ -442,10 +455,106 @@ public class StudentKioskFX {
         BorderPane main = new BorderPane();
         main.setStyle("-fx-background-color:#F4F6FA;");
         main.setTop(buildDashTopBar());
-        contentArea = new StackPane();
+
+        contentPane = new StackPane();
+        contentPane.setStyle("-fx-background-color:#F4F6FA;");
+
+        loaderOverlay = buildLoaderOverlay();
+        contentArea = new StackPane(contentPane, loaderOverlay);
         contentArea.setStyle("-fx-background-color:#F4F6FA;");
+
         main.setCenter(contentArea);
         return main;
+    }
+
+    private StackPane buildLoaderOverlay() {
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color: rgba(244, 246, 250, 0.78);");
+
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(24, 32, 24, 32));
+        box.setMaxWidth(260);
+        box.setMaxHeight(135);
+        box.setStyle("-fx-background-color: #FFFFFF; -fx-background-radius: 14; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.14), 16, 0, 0, 4); -fx-border-color: #E2E8F0; -fx-border-radius: 14; -fx-border-width: 1;");
+
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setPrefSize(38, 38);
+        spinner.setStyle("-fx-progress-color: #CC2936;");
+
+        loaderMessageLabel = new Label("Updating records...");
+        loaderMessageLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        loaderMessageLabel.setTextFill(Color.web(FXComponents.T_PRIMARY));
+
+        Label subText = new Label("Please wait a moment");
+        subText.setFont(Font.font("Segoe UI", 11));
+        subText.setTextFill(Color.web(FXComponents.T_MUTED));
+
+        box.getChildren().addAll(spinner, loaderMessageLabel, subText);
+        overlay.getChildren().add(box);
+        overlay.setVisible(false);
+        overlay.setManaged(false);
+        return overlay;
+    }
+
+    public void setLoading(boolean loading, String message) {
+        if (loaderOverlay != null) {
+            if (loading) {
+                if (loaderMessageLabel != null && message != null) {
+                    loaderMessageLabel.setText(message);
+                }
+                loaderOverlay.setVisible(true);
+                loaderOverlay.setManaged(true);
+                loaderOverlay.toFront();
+                FXComponents.fadeInSlide(loaderOverlay);
+            } else {
+                loaderOverlay.setVisible(false);
+                loaderOverlay.setManaged(false);
+            }
+        }
+    }
+
+    public void triggerRefresh() {
+        if (refreshBtn != null) refreshBtn.setDisable(true);
+        setLoading(true, "Refreshing library records...");
+
+        Thread t = new Thread(() -> {
+            try {
+                // Invalidate caches and pull fresh data from DB on background thread
+                DataStore.get().invalidateTransactions();
+                DataStore.get().invalidateStudents();
+                DataStore.get().getTransactions(true);
+                DataStore.get().getStudents(true);
+
+                Student fresh = DataStore.get().findStudentById(currentStudent.getStudentId());
+                if (fresh != null) {
+                    currentStudent.setActiveLoans(fresh.getActiveLoans());
+                    currentStudent.setOverdueCount(fresh.getOverdueCount());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                Platform.runLater(() -> {
+                    dashNode = null;
+                    histNode = null;
+                    profileNode = null;
+
+                    Node refreshedNode = switch (currentPanelName) {
+                        case "My History" -> getHist();
+                        case "My Profile" -> getProfile();
+                        default           -> getDash();
+                    };
+                    showDashPanel(refreshedNode, currentPanelName);
+                    setLoading(false, null);
+                    if (refreshBtn != null) refreshBtn.setDisable(false);
+                    if (stackRoot != null) {
+                        FXComponents.showToast(stackRoot, "Library records updated!", "success");
+                    }
+                });
+            }
+        });
+        t.setDaemon(true);
+        t.start();
     }
 
     private HBox buildDashTopBar() {
@@ -459,10 +568,11 @@ public class StudentKioskFX {
         left.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(left, Priority.ALWAYS);
 
-        Button backBtn = new Button("‹ Portal");
-        backBtn.setStyle("-fx-background-color:transparent; -fx-text-fill:#5A6480; -fx-font-size:11; -fx-cursor:hand;");
-        FXComponents.addPopHover(backBtn, 1.05);
-        backBtn.setOnAction(e -> goToPortal());
+        Button logoutBtn = FXComponents.ghostButton("⎋  Log Out");
+        logoutBtn.setPrefHeight(32);
+        logoutBtn.setStyle("-fx-padding: 4 14 4 10; -fx-font-size: 12px; -fx-text-fill: #CC2936; -fx-border-color: #F87171; -fx-background-color: #FFF1F2; -fx-background-radius: 8; -fx-border-radius: 8; -fx-font-weight: bold; -fx-cursor: hand;");
+        FXComponents.addPopHover(logoutBtn, 1.05);
+        logoutBtn.setOnAction(e -> doLogout());
 
         Separator sep = new Separator(javafx.geometry.Orientation.VERTICAL);
         sep.setPrefHeight(22);
@@ -477,11 +587,17 @@ public class StudentKioskFX {
         welcomeLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         welcomeLbl.setTextFill(Color.web(FXComponents.T_PRIMARY));
 
-        left.getChildren().addAll(backBtn, sep, pageTitleLabel);
+        left.getChildren().addAll(logoutBtn, sep, pageTitleLabel);
 
-        HBox right = new HBox(14);
+        HBox right = new HBox(12);
         right.setAlignment(Pos.CENTER_RIGHT);
-        right.getChildren().addAll(FXComponents.statusDot("NFC Reader", true), welcomeLbl);
+
+        refreshBtn = FXComponents.ghostButton("↻  Refresh");
+        refreshBtn.setPrefHeight(32);
+        refreshBtn.setStyle("-fx-padding: 4 12 4 10; -fx-font-size: 12px;");
+        refreshBtn.setOnAction(e -> triggerRefresh());
+
+        right.getChildren().addAll(refreshBtn, FXComponents.statusDot("NFC Reader", true), welcomeLbl);
 
         bar.getChildren().addAll(left, right);
         return bar;
@@ -496,35 +612,60 @@ public class StudentKioskFX {
 
     private void showDashPanel(Node node, String title) {
         if (pageTitleLabel != null) { pageTitleLabel.setText(title); FXComponents.fadeInSlide(pageTitleLabel); }
-        contentArea.getChildren().setAll(node);
+        currentPanelName = title;
+        contentPane.getChildren().setAll(node);
         FXComponents.fadeInSlide(node);
     }
 
-    private void goToPortal() {
+    public void doLogout() {
         if (clockTimeline != null) clockTimeline.stop();
-        stage.setTitle("A.K.L.A.T. — Portal Selection");
-        stage.setScene(new PortalScreenFX(stage).buildScene());
-        stage.setWidth(1024);
-        stage.setHeight(620);
+        stage.setTitle("A.K.L.A.T. — Student Kiosk");
+        StudentKioskFX fresh = new StudentKioskFX(stage);
+        Scene scene = fresh.buildScene();
+        stage.setScene(scene);
+        stage.setWidth(1120);
+        stage.setHeight(700);
         stage.centerOnScreen();
+    }
+
+    private void goToPortal() {
+        doLogout();
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // Lazy panel helpers
-    // ─────────────────────────────────────────────────────────────────────
-    private Node getDash()    { if (dashNode    == null) dashNode    = new KioskDashboardFX(this, currentStudent).build(); return dashNode; }
-    private Node getHist()    { if (histNode    == null) histNode    = new KioskHistoryFX(this, currentStudent).build();   return histNode; }
-    private Node getProfile() { if (profileNode == null) profileNode = new KioskProfileFX(this, currentStudent).build();  return profileNode; }
+    private Node getDash() {
+        if (dashNode == null) {
+            dashNode = new KioskDashboardFX(this, currentStudent).build();
+        }
+        return dashNode;
+    }
 
-    public void refreshDash()   { dashNode   = null; }
+    private Node getHist() {
+        if (histNode == null) {
+            histNode = new KioskHistoryFX(this, currentStudent).build();
+        }
+        return histNode;
+    }
+
+    private Node getProfile() {
+        if (profileNode == null) {
+            profileNode = new KioskProfileFX(this, currentStudent).build();
+        }
+        return profileNode;
+    }
+
+    public void refreshDash() {
+        dashNode = null;
+        histNode = null;
+    }
 
     // Public nav for panel buttons
     public void navigateTo(String panelName) {
-        // Find nav button by panel name and simulate click via re-using navTo pattern
         Node panel = switch (panelName) {
             case "My History"    -> getHist();
             case "My Profile"    -> getProfile();
-            default              -> { refreshDash(); yield getDash(); }
+            default              -> getDash();
         };
         showDashPanel(panel, panelName);
     }

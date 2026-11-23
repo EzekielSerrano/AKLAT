@@ -1,0 +1,228 @@
+================================================================================
+A.K.L.A.T. — AUTOMATED KEY LIBRARY ANALYTICS & TRACKING
+Batangas State University (BatStateU - The National Engineering University)
+Defense Master Reference & System Documentation Guide
+================================================================================
+
+1. SYSTEM IDENTITY & PURPOSE
+--------------------------------------------------------------------------------
+System Name   : A.K.L.A.T. (Automated Key Library Analytics & Tracking)
+Institution   : Batangas State University (BatStateU - The National Engineering University)
+System Type   : Dual-Interface Desktop Library System (Librarian Desk + Student Kiosk)
+Target Users  : Head Librarians, Assistant Staff, University Students (Borrowers)
+
+Core Problem:
+  - Long queues at circulation counters during peak hours.
+  - Manual book tracking and delays in recording borrows and returns.
+  - Time-consuming manual cataloging of new book acquisitions.
+  - Students unaware of active loan count, due dates, and remaining loan limits.
+
+Core Solution:
+  - Librarian Desk: High-speed cashier-style batch circulation (borrow/return in one
+    screen), camera and laser barcode scanning, student NFC card registration, and
+    1-click ISBN auto-cataloging.
+  - Student Kiosk: Secure, touchless self-service terminal. Students tap their NFC ID
+    or enter their SR-Code to instantly see their active loans, due dates, loan slots,
+    and history.
+
+
+2. COMPLETE TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+1. Programming Language:
+   - Java 17 LTS (Modern Java: pattern matching, switch expressions, HttpClient,
+     CompletableFuture, record types).
+
+2. User Interface (GUI):
+   - JavaFX 17 (OpenJFX) with custom CSS (resources/autolib.css).
+   - Custom animations & interactive design (FXComponents.java).
+
+3. Database Management (RDBMS):
+   - PostgreSQL (Relational Database Management System).
+   - Driver: PostgreSQL JDBC Driver 42.7.4.
+   - Cloud Serverless: Neon PostgreSQL (US-East-2) with SSL.
+   - Fallback: Localhost / Local Area Network (LAN) PostgreSQL server.
+
+4. Optical Barcode & QR Code Engine:
+   - Google ZXing 3.5.3 (Zebra Crossing) for decoding 1D (Code 128, EAN, ISBN)
+     and 2D (QR) barcodes.
+
+5. Live Camera Hardware Integration:
+   - Sarxos Webcam-Capture 0.3.12 + BridJ 0.7.0 (JNI bridge for real-time video feed
+     and optical barcode recognition from standard system webcams).
+
+6. RFID / NFC Hardware:
+   - 13.56 MHz Contactless Smart Card / NFC Reader for reading student card UIDs.
+
+7. External Web APIs:
+   - Google Books API & Open Library REST API: Queries bibliographic metadata
+     (Title, Author, Publisher, Year, Dewey Decimal, Cover Image) via ISBN over HTTPS.
+
+
+3. SOFTWARE ARCHITECTURE & DESIGN PATTERNS
+--------------------------------------------------------------------------------
+Architecture: N-Tier Layered Architecture with MVC & Service-DAO separation.
+
+  [Peripherals: NFC Reader / USB Barcode Scanner / Webcam]
+                           |
+                           v
+  [Presentation Layer: JavaFX Views & CSS]
+    (PortalScreenFX, LibrarianPortalFX, StudentKioskFX, Panels)
+                           |
+                           v
+  [Controller / Business Logic Layer]
+    (CirculationFX, BookCatalogFX, StudentsFX, KioskDashboardFX)
+                           |
+                           v
+  [Service Layer]
+    (IsbnLookupService, CameraBarcodeScannerFX, Asynchronous Workers)
+                           |
+                           v
+  [Data Access Layer (DAO / Repository)]
+    (DataStore.java - Thread-safe Double-Checked Locking Singleton)
+                           |
+                           v
+  [Database Layer: PostgreSQL]
+    (tables: students, books, transactions, staff_users)
+
+Key Design Patterns:
+  1. Singleton Pattern:
+     - DataStore.get() uses thread-safe Double-Checked Locking to maintain a
+       single repository and in-memory cache instance.
+     - DBConnection manages connection settings globally.
+  2. DAO / Repository Pattern:
+     - DataStore completely isolates controllers from raw SQL.
+  3. Factory Pattern:
+     - FXComponents.java provides standardized UI factories (buttons, stat cards,
+       badges, input fields, NFC animation).
+  4. Observer / Listener Pattern:
+     - JavaFX properties listen reactively to user input, NFC taps, and field states.
+  5. Asynchronous Workers:
+     - Heavy I/O (database calls, web APIs) runs on background worker threads
+       (CompletableFuture), dispatching UI updates to the JavaFX Application
+       Thread via Platform.runLater().
+
+
+4. DATABASE SCHEMA & DATA INTEGRITY
+--------------------------------------------------------------------------------
+Tables in PostgreSQL (db/schema.sql):
+
+1. students:
+   - student_id (VARCHAR(30) PRIMARY KEY) -> SR-Code (e.g., 2024-10042)
+   - name (VARCHAR(150))
+   - department (VARCHAR(50)) -> CICS, COE, CAS, COED, etc.
+   - year_level (VARCHAR(30))
+   - nfc_registered (BOOLEAN)
+   - nfc_uid (VARCHAR(64) UNIQUE)
+   - active_loans (INT)
+   - overdue_count (INT)
+
+2. books:
+   - barcode (VARCHAR(30) PRIMARY KEY) -> e.g., BK-00492
+   - title (VARCHAR(255))
+   - author (VARCHAR(255))
+   - call_number (VARCHAR(50))
+   - section (VARCHAR(100))
+   - total_copies (INT)
+   - available_copies (INT) [Constraint: available_copies <= total_copies]
+   - isbn (VARCHAR(30))
+   - dewey_decimal (VARCHAR(50))
+
+3. transactions:
+   - id (BIGSERIAL PRIMARY KEY)
+   - student_id (VARCHAR(30) REFERENCES students)
+   - student_name (VARCHAR(150))
+   - book_barcode (VARCHAR(30) REFERENCES books)
+   - book_title (VARCHAR(255))
+   - type (VARCHAR(20)) -> 'BORROWED', 'RETURNED', 'OVERDUE'
+   - days_overdue (INT DEFAULT 0)
+   - transaction_time (TIMESTAMP WITH TIME ZONE)
+
+4. staff_users:
+   - id (SERIAL PRIMARY KEY)
+   - username (VARCHAR(50) UNIQUE)
+   - password_hash (VARCHAR(255))
+   - full_name (VARCHAR(100))
+   - role (VARCHAR(50))
+
+ACID Compliance:
+  - Circulation actions (checkoutBook / checkinBook) run inside an explicit atomic
+    transaction (setAutoCommit(false)).
+  - Updating book stock, student loan count, and inserting audit logs happen together.
+  - If any step fails, connection.rollback() is triggered, ensuring zero data corruption.
+
+
+5. CORE MODULES & FEATURES
+--------------------------------------------------------------------------------
+A. Librarian Administration Portal:
+   - Cashier-Style Circulation (CirculationFX):
+     * Tap student card / scan ID.
+     * Scan books via laser scanner or webcam.
+     * Auto-detects whether each book is a Borrow or a Return.
+     * 1-click batch submit commits everything atomically to PostgreSQL.
+   - Book Catalog (BookCatalogFX):
+     * Search, filter, and edit book records.
+     * 1-Click ISBN auto-fill queries Google Books & Open Library APIs.
+   - Student Records (StudentsFX):
+     * Add/edit students, live NFC card registration and linking.
+   - Reports & Analytics (DashboardFX, ReportsFX):
+     * Visual charts, active loans, overdue tracking, department rankings.
+
+B. Student Self-Service Kiosk:
+   - Touchless NFC Login:
+     * Tap university ID card -> authenticated in under 50 milliseconds.
+   - Dashboard:
+     * Active loans count, overdue warnings, remaining borrowing slots (max 5),
+       and borrowed books table.
+   - Personal History & Profile:
+     * Complete borrowing history log and student verification.
+   - Kiosk Security:
+     * View-only terminal. Students cannot modify inventory or clear loans.
+     * Logout resets directly back to the Tap Screen.
+
+
+6. KEY ENGINEERING INNOVATIONS & OPTIMIZATIONS
+--------------------------------------------------------------------------------
+1. Zero-Latency NFC Tap Identification:
+   - Real-time in-memory cache lookup (findStudentByNfcInMemory) ensures keystrokes
+     and card reads never hang the UI thread with network roundtrips.
+2. Async Database Warm-up (DataStore.warmUpAsync):
+   - Pre-initializes database connections on launch so the first student tap
+     experiences zero cold-start delay.
+3. Transaction Deduplication:
+   - Resolves active student loans dynamically by latest barcode event, preventing
+     duplicate counts across multiple historical borrow/return cycles.
+4. Dual Barcode Reading:
+   - Hardware USB scanner support (keyboard wedge) + live optical camera recognition.
+
+
+7. DEFENSE QUESTIONS & ANSWERS (CHEAT-SHEET)
+--------------------------------------------------------------------------------
+Q1: Why JavaFX instead of a Web Application?
+A1: JavaFX gives direct, low-latency access to hardware peripherals (USB NFC readers,
+    barcode scanners, and direct webcam drivers via JNI/BridJ). A dedicated desktop
+    kiosk creates a secure, controlled, and tamper-proof environment that cannot be
+    bypassed with browser developer tools or URL tampering.
+
+Q2: How do you handle network latency with a cloud database?
+A2: All database and web API requests execute asynchronously on background worker
+    threads using CompletableFuture, keeping the UI at 60 FPS. In addition, we use
+    in-memory student caching and background connection pre-warming (warmUpAsync).
+
+Q3: How do you ensure data consistency during book checkout?
+A3: All circulation operations run in atomic SQL transactions (setAutoCommit(false)).
+    Book inventory, student loan count, and audit transaction logs commit together.
+    If any step fails, the entire transaction is rolled back.
+
+Q4: What happens if the internet connection is lost?
+A4: A.K.L.A.T. has multi-tier connection fallback. If cloud database connectivity
+    fails, the system automatically redirects to an on-premise local/LAN PostgreSQL
+    server on the university intranet.
+
+Q5: Why is the Student Kiosk view-only instead of allowing self-checkout?
+A5: Physical library materials require staff verification to prevent book theft,
+    damaged returns, or incorrect item swaps. The kiosk gives students instant
+    visibility while the circulation desk retains cashier-style inventory control.
+
+================================================================================
+END OF DEFENSE GUIDE — GOOD LUCK ON YOUR DEFENSE!
+================================================================================

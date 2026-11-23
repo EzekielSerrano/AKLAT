@@ -59,9 +59,15 @@ public class PortalScreenFX {
     private StackPane cardWrap;
     private Animation introAnim;
     private boolean introStarted, introDone, skipping, contentStarted;
+    private final boolean kioskOnly;
 
     public PortalScreenFX(Stage stage) {
+        this(stage, "true".equalsIgnoreCase(System.getProperty("autolib.kiosk")));
+    }
+
+    public PortalScreenFX(Stage stage, boolean kioskOnly) {
         this.stage = stage;
+        this.kioskOnly = kioskOnly;
     }
 
     public Scene buildScene() {
@@ -457,8 +463,14 @@ public class PortalScreenFX {
         scene.setOnKeyPressed(e -> {
             if (!introDone) { skipIntro(); return; }
             KeyCode k = e.getCode();
-            if (k == KeyCode.DIGIT1 || k == KeyCode.NUMPAD1 || k == KeyCode.L) openLibrarianLogin();
-            else if (k == KeyCode.DIGIT2 || k == KeyCode.NUMPAD2 || k == KeyCode.S) openStudentKiosk();
+            if (kioskOnly) {
+                if (k == KeyCode.ENTER || k == KeyCode.SPACE || k == KeyCode.DIGIT2 || k == KeyCode.NUMPAD2 || k == KeyCode.S) {
+                    openStudentKiosk();
+                }
+            } else {
+                if (k == KeyCode.DIGIT1 || k == KeyCode.NUMPAD1 || k == KeyCode.L) openLibrarianLogin();
+                else if (k == KeyCode.DIGIT2 || k == KeyCode.NUMPAD2 || k == KeyCode.S) openStudentKiosk();
+            }
         });
     }
 
@@ -670,18 +682,6 @@ public class PortalScreenFX {
         sub.setTextFill(Color.web("#8A96B2"));
         sub.setPadding(new Insets(0, 0, 20, 0));
 
-        // ── Interactive Portal Buttons ─────────────────────────────────────
-        HBox libBtn = FXComponents.portalButton(
-            "Librarian / Staff Portal",
-            "Access catalog, circulation reports & settings",
-            "◈",
-            "#CC2936"
-        );
-        fillWidth(libBtn);
-
-        Region gap = new Region();
-        gap.setMinHeight(12);
-
         HBox stuBtn = FXComponents.portalButton(
             "Student / Borrower Kiosk",
             "NFC tap or Student ID to view your account & loans",
@@ -689,27 +689,56 @@ public class PortalScreenFX {
             "#3B82F6"
         );
         fillWidth(stuBtn);
-
-        // ── Footer ─────────────────────────────────────────────────────────
-        Label foot = new Label("Staff login requires verified administrative credentials.");
-        foot.setFont(Font.font("Segoe UI", 10.5));
-        foot.setTextFill(Color.web("#55607A"));
-        foot.setPadding(new Insets(18, 0, 0, 0));
-        foot.setMaxWidth(Double.MAX_VALUE);
-        foot.setAlignment(Pos.CENTER);
-
-        Label hint = new Label("Tip: press 1 for Staff  •  2 for Kiosk");
-        hint.setFont(Font.font("Segoe UI", 10));
-        hint.setTextFill(Color.web("#454F68"));
-        hint.setPadding(new Insets(6, 0, 0, 0));
-        hint.setMaxWidth(Double.MAX_VALUE);
-        hint.setAlignment(Pos.CENTER);
-
-        card.getChildren().addAll(logoRow, divider, sub, libBtn, gap, stuBtn, foot, hint);
-
-        // Click Events
-        libBtn.setOnMouseClicked(e -> openLibrarianLogin());
         stuBtn.setOnMouseClicked(e -> openStudentKiosk());
+
+        HBox libBtn = null;
+        if (kioskOnly) {
+            Label scanPrompt = new Label("Please tap your NFC ID on the reader or select below to scan");
+            scanPrompt.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+            scanPrompt.setTextFill(Color.web("#94A3B8"));
+            scanPrompt.setPadding(new Insets(0, 0, 16, 0));
+            scanPrompt.setWrapText(true);
+            scanPrompt.setTextAlignment(TextAlignment.CENTER);
+            scanPrompt.setMaxWidth(Double.MAX_VALUE);
+            scanPrompt.setAlignment(Pos.CENTER);
+
+            Label hint = new Label("Place your student card on the scanner to sign in");
+            hint.setFont(Font.font("Segoe UI", 10.5));
+            hint.setTextFill(Color.web("#55607A"));
+            hint.setPadding(new Insets(14, 0, 0, 0));
+            hint.setMaxWidth(Double.MAX_VALUE);
+            hint.setAlignment(Pos.CENTER);
+
+            card.getChildren().addAll(logoRow, divider, scanPrompt, stuBtn, hint);
+        } else {
+            libBtn = FXComponents.portalButton(
+                "Librarian / Staff Portal",
+                "Access catalog, circulation reports & settings",
+                "◈",
+                "#CC2936"
+            );
+            fillWidth(libBtn);
+            libBtn.setOnMouseClicked(e -> openLibrarianLogin());
+
+            Region gap = new Region();
+            gap.setMinHeight(12);
+
+            Label foot = new Label("Staff login requires verified administrative credentials.");
+            foot.setFont(Font.font("Segoe UI", 10.5));
+            foot.setTextFill(Color.web("#55607A"));
+            foot.setPadding(new Insets(18, 0, 0, 0));
+            foot.setMaxWidth(Double.MAX_VALUE);
+            foot.setAlignment(Pos.CENTER);
+
+            Label hint = new Label("Tip: press 1 for Staff  •  2 for Kiosk");
+            hint.setFont(Font.font("Segoe UI", 10));
+            hint.setTextFill(Color.web("#454F68"));
+            hint.setPadding(new Insets(6, 0, 0, 0));
+            hint.setMaxWidth(Double.MAX_VALUE);
+            hint.setAlignment(Pos.CENTER);
+
+            card.getChildren().addAll(logoRow, divider, sub, libBtn, gap, stuBtn, foot, hint);
+        }
 
         // Entrance (played after the splash): card fades/lifts in, then buttons slide in one by one
         StackPane wrap = new StackPane(card);
@@ -737,7 +766,7 @@ public class PortalScreenFX {
         entrance.setDelay(Duration.millis(120));
         contentEntrance.getChildren().add(entrance);
 
-        HBox[] portalBtns = { libBtn, stuBtn };
+        HBox[] portalBtns = libBtn != null ? new HBox[]{ libBtn, stuBtn } : new HBox[]{ stuBtn };
         for (int i = 0; i < portalBtns.length; i++) {
             HBox b = portalBtns[i];
             b.setOpacity(0);

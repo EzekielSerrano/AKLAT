@@ -12,7 +12,7 @@ import java.util.*;
  */
 public class DataStore {
 
-    private static DataStore instance;
+    private static volatile DataStore instance;
     private boolean dbAvailable;
 
     // In-memory cache / fallback with TTL management
@@ -37,9 +37,30 @@ public class DataStore {
     }
 
     public static DataStore get() {
-        if (instance == null)
-            instance = new DataStore();
+        if (instance == null) {
+            synchronized (DataStore.class) {
+                if (instance == null) {
+                    instance = new DataStore();
+                }
+            }
+        }
         return instance;
+    }
+
+    /**
+     * Pre-connects to the database and warms up all caches in a background thread
+     * right after application launch so the first user experiences zero delay.
+     */
+    public static void warmUpAsync() {
+        if (instance != null) return;
+        Thread t = new Thread(() -> {
+            long t0 = System.currentTimeMillis();
+            System.out.println("[AutoLib DB] Pre-connecting to database and warming up cache...");
+            get();
+            System.out.println("[AutoLib DB] Database warm-up complete in " + (System.currentTimeMillis() - t0) + "ms. Ready for instant tap.");
+        }, "AutoLib-DB-Warmup");
+        t.setDaemon(true);
+        t.start();
     }
 
     public boolean isDbAvailable() {
@@ -314,6 +335,42 @@ public class DataStore {
             cachedStudents.remove(idx);
             invalidateStudents();
         }
+    }
+
+    public Student findStudentByIdInMemory(String id) {
+        if (id == null) return null;
+        String q = id.trim();
+        if (q.isEmpty()) return null;
+        for (Student s : cachedStudents) {
+            if (s.getStudentId() != null && s.getStudentId().equalsIgnoreCase(q)) return s;
+        }
+        return null;
+    }
+
+    public Student findStudentByNfcInMemory(String nfcUid) {
+        if (nfcUid == null) return null;
+        String q = nfcUid.trim();
+        if (q.isEmpty()) return null;
+        for (Student s : cachedStudents) {
+            if (s.getNfcUid() != null && s.getNfcUid().equalsIgnoreCase(q)) return s;
+        }
+        return null;
+    }
+
+    public Student findStudentByIdOrNfcInMemory(String query) {
+        if (query == null) return null;
+        String q = query.trim();
+        if (q.isEmpty()) return null;
+
+        Student s = findStudentByIdInMemory(q);
+        if (s != null) return s;
+
+        String cleanQ = q.replace("-", "");
+        for (Student st : cachedStudents) {
+            if (st.getStudentId() != null && st.getStudentId().replace("-", "").equalsIgnoreCase(cleanQ)) return st;
+        }
+
+        return findStudentByNfcInMemory(q);
     }
 
     public Student findStudentById(String id) {

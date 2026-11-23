@@ -804,17 +804,18 @@ public final class FXComponents {
         nfcText.setTextFill(Color.web(RED));
 
         StackPane cardStack = new StackPane(card, nfcText);
+        cardStack.setTranslateX(-size * 0.08);
 
         // 3 rings, lit up in sequence like a signal travelling outward
         Timeline waves = new Timeline();
         for (int i = 1; i <= 3; i++) {
-            Arc arc = new Arc(0, 0, size * 0.15 * i, size * 0.15 * i, 25, 130);
+            Arc arc = new Arc(0, 0, size * 0.12 * i, size * 0.12 * i, 25, 130);
             arc.setType(ArcType.OPEN);
             arc.setFill(Color.TRANSPARENT);
             arc.setStroke(Color.web(RED));
             arc.setStrokeWidth(1.8);
             arc.setStrokeLineCap(StrokeLineCap.ROUND);
-            arc.setTranslateX(size * 0.14);
+            arc.setTranslateX(size * 0.08);
             arc.setOpacity(0);
 
             double start = (i - 1) * 230;

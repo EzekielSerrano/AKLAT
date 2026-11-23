@@ -77,3 +77,8 @@ secret.properties
 config.properties
 credentials.*
 application-secret.*
+
+# ──────────────────────────────────────────────────────────────────
+# Local reference / personal notes — not part of the project source
+# ──────────────────────────────────────────────────────────────────
+DEFENSE_GUIDE.txt
